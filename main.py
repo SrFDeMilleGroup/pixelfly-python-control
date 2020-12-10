@@ -99,7 +99,7 @@ def steal_colormap(colorname="viridis", lut=12):
 
     return colordata_reform
 
-def fake_data(x_range=1392, y_range=1040, x_center=700, y_center=500, x_err=100, y_err=50, amp=20):
+def fake_data(x_range=20, y_range=30, x_center=6, y_center=10, x_err=5, y_err=5, amp=20):
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
     gauss = np.exp(-dst)*amp + np.random.normal(size=(x_range, y_range))
@@ -225,14 +225,14 @@ class Control(Scrollarea):
 
     def place_recording(self):
         record_box = qt.QGroupBox("Recording")
-        record_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
+        record_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         record_box.setMaximumHeight(180)
         record_frame = qt.QGridLayout()
         record_box.setLayout(record_frame)
         self.frame.addWidget(record_box)
 
         self.record_bt = qt.QPushButton("Record")
-        self.record_bt.clicked[bool].connect(lambda val: self.start())
+        self.record_bt.clicked[bool].connect(lambda val: self.record())
         record_frame.addWidget(self.record_bt, 0, 0)
 
         self.scan_bt = qt.QPushButton("Scan")
@@ -264,7 +264,7 @@ class Control(Scrollarea):
 
     def place_image_control(self):
         img_ctrl_box = qt.QGroupBox("Image Control")
-        img_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
+        img_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         img_ctrl_frame = qt.QFormLayout()
         img_ctrl_box.setLayout(img_ctrl_frame)
         self.frame.addWidget(img_ctrl_box)
@@ -378,7 +378,7 @@ class Control(Scrollarea):
 
     def place_cam_control(self):
         self.cam_ctrl_box = qt.QGroupBox("Camera Control")
-        self.cam_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
+        self.cam_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         cam_ctrl_frame = qt.QFormLayout()
         self.cam_ctrl_box.setLayout(cam_ctrl_frame)
         self.frame.addWidget(self.cam_ctrl_box)
@@ -481,11 +481,19 @@ class Control(Scrollarea):
         self.save_settings_bt.clicked[bool].connect(lambda val: self.save_settings())
         cam_ctrl_frame.addRow("Save settings:", self.save_settings_bt)
 
-    def start(self):
+    def record(self):
         self.record_bt.setEnabled(False)
         self.scan_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
         self.cam_ctrl_box.setEnabled(False)
+
+        self.running = True
+        for i in range(10):
+            data = fake_data()
+            self.parent.image_win.imgs_dict["Background"].setImage(data)
+            # self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+            # self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+            time.sleep(0.5)
 
     def scan(self):
         self.scan_bt.setEnabled(False)
@@ -494,6 +502,8 @@ class Control(Scrollarea):
         self.cam_ctrl_box.setEnabled(False)
 
     def stop(self):
+        self.running = False
+
         self.stop_bt.setEnabled(False)
         self.record_bt.setEnabled(True)
         self.scan_bt.setEnabled(True)
@@ -527,7 +537,7 @@ class ImageWin(Scrollarea):
         self.frame.setRowStretch(1,1)
         self.frame.setRowStretch(2,1)
         self.imgs_dict = {}
-        self.imgs_name = ["background", "signal", "signal w/ bg subtraction"]
+        self.imgs_name = ["Background", "Signal", "Signal w/ bg subtraction"]
 
         self.place_sgn_imgs()
         self.place_axis_plots()
@@ -549,23 +559,36 @@ class ImageWin(Scrollarea):
             graphlayout.addItem(hist)
             hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
-            self.data = fake_data(x_range=20, y_range=30, x_center=6, y_center=10, x_err=5, y_err=5)
+            self.data = fake_data()
             img.setImage(self.data)
 
             self.imgs_dict[name] = img
 
     def place_axis_plots(self):
-        x_data = np.sum(self.data, axis=1)
-        x_plot_widget = pg.PlotWidget(border=True)
-        x_plot_widget.showGrid(True, True)
-        self.x_plot = x_plot_widget.plot(x_data)
-        self.frame.addWidget(x_plot_widget, 0, 1)
+        tickstyle = {"showValues": False}
 
+        x_data = np.sum(self.data, axis=1)
+        graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
+        self.frame.addWidget(graphlayout, 0, 1, 2, 1)
+        x_plot_item = graphlayout.addPlot(title="Camera count v.s. X")
+        x_plot_item.showGrid(True, True)
+        x_plot_item.setLabel("top")
+        # x_plot_item.getAxis("top").setTicks([])
+        x_plot_item.getAxis("top").setStyle(**tickstyle)
+        x_plot_item.setLabel("right")
+        # x_plot_item.getAxis("right").setTicks([])
+        x_plot_item.getAxis("right").setStyle(**tickstyle)
+        self.x_plot = x_plot_item.plot(x_data)
+
+        graphlayout.nextRow()
         y_data = np.sum(self.data, axis=0)
-        y_plot_widget = pg.PlotWidget()
-        y_plot_widget.showGrid(True, True)
-        self.y_plot = y_plot_widget.plot(y_data)
-        self.frame.addWidget(y_plot_widget, 1, 1)
+        y_plot_item = graphlayout.addPlot(title="Camera count v.s. Y")
+        y_plot_item.showGrid(True, True)
+        y_plot_item.setLabel("top")
+        y_plot_item.getAxis("top").setStyle(**tickstyle)
+        y_plot_item.setLabel("right")
+        y_plot_item.getAxis("right").setStyle(**tickstyle)
+        self.y_plot = y_plot_item.plot(y_data)
 
     def place_ave_image(self):
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
@@ -584,10 +607,14 @@ class ImageWin(Scrollarea):
         self.ave_img.setImage(data)
 
     def place_scan_plot(self):
-        scan_plot_widget = pg.PlotWidget()
-        scan_plot_widget.showGrid(True, True)
-        self.scan_plot = scan_plot_widget.plot()
-        self.frame.addWidget(scan_plot_widget, 2, 1)
+        self.scan_plot_widget = pg.PlotWidget(title="Camera count v.s. Scan param.")
+        self.scan_plot_widget.showGrid(True, True)
+        fontstyle = {"color": "#919191", "font-size": "11pt"}
+        self.scan_plot_widget.setLabel("bottom", "Scan parameter", **fontstyle)
+        # tickstyle = {"tickTextOffset": 0, "tickTextHeight": -10, "tickTextWidth": 0}
+        # self.scan_plot_widget.getAxis("bottom").setStyle(**tickstyle)
+        self.scan_plot = self.scan_plot_widget.plot()
+        self.frame.addWidget(self.scan_plot_widget, 2, 1)
 
 
 class CameraGUI(qt.QMainWindow):
