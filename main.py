@@ -99,10 +99,11 @@ def steal_colormap(colorname="viridis", lut=12):
 
     return colordata_reform
 
-def fake_data(x_range=20, y_range=30, x_center=6, y_center=10, x_err=5, y_err=5, amp=20):
+def fake_data(x_range=20, y_range=30, x_center=14, y_center=20, x_err=5, y_err=5, amp=10000):
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
-    gauss = np.exp(-dst)*amp + np.random.normal(size=(x_range, y_range))
+    gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))*amp/20
+    gauss = gauss.astype("uint16")
 
     return gauss
 
@@ -143,38 +144,42 @@ class CamThread(PyQt5.QtCore.QThread):
         self.parent = parent
 
     def run(self):
-        for i in range(10):
-            last_time = time.time()
-            while time.time()-last_time < 1:
-                continue
-            data = np.random.randint(low=0, high=1000, size=(1000, 1000), dtype=np.uint16)
-            self.parent.image_win.imgs_dict["Background"].setImage(data)
-            self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-            self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
-            # self.parent.app.processEvents()
-            # time.sleep(1)
+        self.counter = 0
+        self.timer = PyQt5.QtCore.QTimer()
+        self.timer.timeout.connect(self.update)
+        self.timer.start(700)
+
+    def update(self):
+        data = np.random.randint(low=0, high=1000, size=(200, 200), dtype=np.uint16)
+        self.parent.image_win.imgs_dict["Background"].setImage(data)
+        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+
+        self.counter += 1
+        if self.counter == 10:
+            self.timer.stop()
 
 
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
 
-        # try:
-        #     self.cam = pco.Camera(interface='USB 2.0')
-        # except Exception as err:
-        #     logging.error(traceback.format_exc())
-        #     logging.error("Can't open camera")
-        #     return
-        #
-        # self.set_sensor_format(sensor_format_default)
-        # self.set_clock_rate(clock_rate_default)
-        # self.set_conv_factor(conv_factor_default)
-        # self.set_trigger_mode(trigger_mode_default)
-        # self.trigger_source = trigger_source_default
-        # self.set_expo_time(expo_time_default, expo_unit_default)
-        # self.set_binning(binning_default[0], binning_default[1])
-        # self.gaussian_fit = gaussian_fit_default
-        # self.img_save = img_auto_save_default
+        try:
+            self.cam = pco.Camera(interface='USB 2.0')
+        except Exception as err:
+            logging.error(traceback.format_exc())
+            logging.error("Can't open camera")
+            return
+
+        self.set_sensor_format(sensor_format_default)
+        self.set_clock_rate(clock_rate_default)
+        self.set_conv_factor(conv_factor_default)
+        self.set_trigger_mode(trigger_mode_default)
+        self.trigger_source = trigger_source_default
+        self.set_expo_time(expo_time_default, expo_unit_default)
+        self.set_binning(binning_default[0], binning_default[1])
+        self.gaussian_fit = gaussian_fit_default
+        self.img_save = img_auto_save_default
 
     def set_sensor_format(self, arg):
         self.cam.sdk.set_sensor_format(sensor_format_options[arg][0])
@@ -505,8 +510,25 @@ class Control(Scrollarea):
         self.stop_bt.setEnabled(True)
         self.cam_ctrl_box.setEnabled(False)
 
-        self.t = CamThread(self.parent)
-        self.t.start()
+        # self.t = CamThread(self.parent)
+        # self.t.start()
+
+        self.counter = 0
+        self.timer = PyQt5.QtCore.QTimer()
+        self.timer.timeout.connect(self.update)
+        self.timer.start(2000)
+
+    def update(self):
+        # data = fake_data(x_range=2000, y_range=3000, x_center=1400, y_center=1500, x_err=500, y_err=500)
+        self.parent.device.cam.record()
+        image, meta = self.parent.device.cam.image()
+        data = image
+        self.parent.image_win.imgs_dict["Background"].setImage(data)
+        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+        self.counter += 1
+        if self.counter == 10:
+            self.timer.stop()
 
     def scan(self):
         self.scan_bt.setEnabled(False)
@@ -567,10 +589,10 @@ class ImageWin(Scrollarea):
             img = pg.ImageItem()
             plot.addItem(img)
 
-            # hist = pg.HistogramLUTItem()
-            # hist.setImageItem(img)
-            # graphlayout.addItem(hist)
-            # hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
+            hist = pg.HistogramLUTItem()
+            hist.setImageItem(img)
+            graphlayout.addItem(hist)
+            hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
             self.data = fake_data()
             img.setImage(self.data)
