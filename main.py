@@ -137,6 +137,24 @@ class Scrollarea(qt.QGroupBox):
         box.setLayout(self.frame)
 
 
+class CamThread(PyQt5.QtCore.QThread):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+
+    def run(self):
+        for i in range(10):
+            last_time = time.time()
+            while time.time()-last_time < 1:
+                continue
+            data = np.random.randint(low=0, high=1000, size=(1000, 1000), dtype=np.uint16)
+            self.parent.image_win.imgs_dict["Background"].setImage(data)
+            self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+            self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+            # self.parent.app.processEvents()
+            # time.sleep(1)
+
+
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
@@ -487,13 +505,8 @@ class Control(Scrollarea):
         self.stop_bt.setEnabled(True)
         self.cam_ctrl_box.setEnabled(False)
 
-        self.running = True
-        for i in range(10):
-            data = fake_data()
-            self.parent.image_win.imgs_dict["Background"].setImage(data)
-            # self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-            # self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
-            time.sleep(0.5)
+        self.t = CamThread(self.parent)
+        self.t.start()
 
     def scan(self):
         self.scan_bt.setEnabled(False)
@@ -554,10 +567,10 @@ class ImageWin(Scrollarea):
             img = pg.ImageItem()
             plot.addItem(img)
 
-            hist = pg.HistogramLUTItem()
-            hist.setImageItem(img)
-            graphlayout.addItem(hist)
-            hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
+            # hist = pg.HistogramLUTItem()
+            # hist.setImageItem(img)
+            # graphlayout.addItem(hist)
+            # hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
             self.data = fake_data()
             img.setImage(self.data)
@@ -618,10 +631,11 @@ class ImageWin(Scrollarea):
 
 
 class CameraGUI(qt.QMainWindow):
-    def __init__(self):
+    def __init__(self, app):
         super().__init__()
         self.setWindowTitle('pco.pixelfly usb')
         self.setStyleSheet("QWidget{font: 10pt;}")
+        self.app = app
 
         self.device = pixelfly(self)
         self.control = Control(self)
@@ -640,7 +654,7 @@ class CameraGUI(qt.QMainWindow):
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-    main_window = CameraGUI()
+    main_window = CameraGUI(app)
     app.exec_()
     main_window.device.cam.close()
     sys.exit(0)
