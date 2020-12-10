@@ -5,6 +5,8 @@ import time
 import logging
 import traceback
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
 import configparser
 import PyQt5
 import pyqtgraph as pg
@@ -63,7 +65,8 @@ import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 # dwGeneralCapsDESC3: 0
 # dwGeneralCapsDESC4: 0
 
-sensor_format_options = {"standard (1392*1040)": "standard", "extended (800*600)": "extended"}
+sensor_format_options = {"standard (1392*1040)": ("standard", (0, 1391), (0, 1039)),
+                        "extended (800*600)": ("extended", (0, 799), (0, 599))}
 sensor_format_default = list(sensor_format_options.keys())[0]
 clock_rate_options = {"12 MHz": 12000000, "24 MHz": 24000000}
 clock_rate_default = list(clock_rate_options.keys())[0]
@@ -83,6 +86,24 @@ expo_decimals = 6 # converted from Min Expos Step DESC in ns
 binning_max = 4 # same for both horizontal and vertical
 binning_default = (1, 1) # (horizontal, vertical)
 gaussian_fit_default = False
+
+# steal colormap datat from matplotlib
+def steal_colormap(colorname="viridis", lut=12):
+    color = cm.get_cmap(colorname, lut)
+    colordata = color(range(lut)) # (r, g, b, a=opacity)
+    colordata_reform = []
+    for i in range(lut):
+        l = [i/lut, tuple(colordata[i]*255)]
+        colordata_reform.append(tuple(l))
+
+    return colordata_reform
+
+def fake_data(x_range=1392, y_range=1040, x_center=700, y_center=500, x_err=100, y_err=50, amp=100):
+    x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
+    dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
+    gauss = np.exp(-dst)*amp + np.random.normal(size=(x_range, y_range))
+
+    return gauss
 
 def Scrollarea(label="", type="grid"):
     outer_box = qt.QGroupBox(label)
@@ -107,6 +128,7 @@ def Scrollarea(label="", type="grid"):
 
     return outer_box, inner_layout
 
+
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
@@ -128,7 +150,7 @@ class pixelfly:
         # self.gaussian_fit = gaussian_fit_default
 
     def set_sensor_format(self, arg):
-        self.cam.sdk.set_sensor_format(sensor_format_options[arg])
+        self.cam.sdk.set_sensor_format(sensor_format_options[arg][0])
         self.cam.sdk.arm_camera()
 
     def set_clock_rate(self, arg):
@@ -215,7 +237,7 @@ class Controls(qt.QWidget):
         for i in range(len(sensor_format_options)):
             self.sensor_format_cb.addItem(list(sensor_format_options.keys())[i])
         self.sensor_format_cb.setCurrentText(sensor_format_default)
-        self.sensor_format_cb.activated[str].connect(lambda val: self.parent.device.set_sensor_format(val))
+        self.sensor_format_cb.activated[str].connect(lambda val: self.set_sensor_format(val))
         control_frame.addRow("Sensor size:", self.sensor_format_cb)
 
         self.clock_rate_cb = qt.QComboBox()
@@ -385,6 +407,10 @@ class Controls(qt.QWidget):
         self.scan_bt.setEnabled(True)
         self.control_elem_box.setEnabled(True)
 
+    def set_sensor_format(self, val):
+        self.parent.device.set_sensor_format(val)
+        # to-do: modify plots range spinboxes
+
     def set_expo_time(self, time, unit):
         t = self.parent.device.set_expo_time(time, unit)
         self.expo_le.setText(t)
@@ -396,11 +422,90 @@ class Controls(qt.QWidget):
         pass
 
 
-class Plots(qt.QWidget):
+class Plots(qt.QGroupBox):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
+        self.setTitle("Images")
+        self.frame = qt.QGridLayout()
+        self.setLayout(self.frame)
 
+        self.place_range_control()
+        self.place_plots()
+
+    def place_range_control(self):
+        x_min = sensor_format_options[sensor_format_default][1][0]
+        x_max = sensor_format_options[sensor_format_default][1][1]
+        self.x_min_sb = qt.QSpinBox()
+        self.x_min_sb.setRange(x_min, x_max)
+        self.x_min_sb.setValue(x_min)
+        self.x_max_sb = qt.QSpinBox()
+        self.x_max_sb.setRange(x_min, x_max)
+        self.x_max_sb.setValue(x_max)
+        self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
+                                                self.range_change(text, val, sb))
+        self.x_max_sb.valueChanged[int].connect(lambda val, text='xmax', sb=self.x_min_sb:
+                                                self.range_change(text, val, sb))
+
+        x_range_box = qt.QWidget()
+        x_range_layout = qt.QHBoxLayout()
+        x_range_layout.setContentsMargins(0,0,0,0)
+        x_range_box.setLayout(x_range_layout)
+        x_range_layout.addWidget(self.x_min_sb)
+        x_range_layout.addWidget(self.x_max_sb)
+
+        x_box = qt.QWidget()
+        x_layout = qt.QFormLayout()
+        x_box.setLayout(x_layout)
+        x_layout.addRow("X range:", x_range_box)
+        self.frame.addWidget(x_box, 0, 0)
+
+        y_min = sensor_format_options[sensor_format_default][2][0]
+        y_max = sensor_format_options[sensor_format_default][2][1]
+        self.y_min_sb = qt.QSpinBox()
+        self.y_min_sb.setRange(y_min, y_max)
+        self.y_min_sb.setValue(y_min)
+        self.y_max_sb = qt.QSpinBox()
+        self.y_max_sb.setRange(y_min, y_max)
+        self.y_max_sb.setValue(y_max)
+        self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
+                                                self.range_change(text, val, sb))
+        self.y_max_sb.valueChanged[int].connect(lambda val, text='ymax', sb=self.y_min_sb:
+                                                self.range_change(text, val, sb))
+
+        y_range_box = qt.QWidget()
+        y_range_layout = qt.QHBoxLayout()
+        y_range_layout.setContentsMargins(0,0,0,0)
+        y_range_box.setLayout(y_range_layout)
+        y_range_layout.addWidget(self.y_min_sb)
+        y_range_layout.addWidget(self.y_max_sb)
+
+        y_box = qt.QWidget()
+        y_layout = qt.QFormLayout()
+        y_box.setLayout(y_layout)
+        y_layout.addRow("Y range:", y_range_box)
+        self.frame.addWidget(y_box, 0, 1)
+
+    def place_plots(self):
+        self.colormap = steal_colormap()
+
+        self.bg_graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
+        self.frame.addWidget(self.bg_graphlayout)
+
+        self.bg_plot = self.bg_graphlayout.addPlot(title="Background")
+        self.bg_img = pg.ImageItem()
+        self.bg_plot.addItem(self.bg_img)
+
+        self.bg_hist = pg.HistogramLUTItem()
+        self.bg_hist.setImageItem(self.bg_img)
+        self.bg_graphlayout.addItem(self.bg_hist)
+        self.bg_hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
+
+        data = fake_data(x_range=20, y_range=20, x_center=10, y_center=10, x_err=5, y_err=3)
+        self.bg_img.setImage(data)
+
+    def range_change(self):
+        pass
 
 class CameraGUI(qt.QMainWindow):
     def __init__(self):
