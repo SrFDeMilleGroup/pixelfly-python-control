@@ -208,40 +208,172 @@ class pixelfly:
         pass
 
 
-class Cam_Control(qt.QWidget):
+class Control(qt.QWidget):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
-        self.setMaximumWidth(400)
+        self.setMaximumWidth(370)
         self.frame = qt.QVBoxLayout()
         self.setLayout(self.frame)
         self.frame.setSpacing(0)
 
-        self.place_record_elements()
-        self.place_control_elements()
-        self.place_indicator_elements()
+        self.place_recording()
+        self.place_image_control()
+        self.place_cam_control()
 
-    def place_record_elements(self):
-        record_box = Scrollarea(self, label="Recording", type="grid")
-        record_box.setMaximumHeight(100)
+    def place_recording(self):
+        record_box = qt.QGroupBox("Recording")
+        record_frame = qt.QGridLayout()
+        record_box.setLayout(record_frame)
         self.frame.addWidget(record_box)
 
         self.record_bt = qt.QPushButton("Record")
         self.record_bt.clicked[bool].connect(lambda val: self.start())
-        record_box.frame.addWidget(self.record_bt, 0, 0)
+        record_frame.addWidget(self.record_bt, 0, 0)
 
         self.scan_bt = qt.QPushButton("Scan")
         self.scan_bt.clicked[bool].connect(lambda val: self.scan())
-        record_box.frame.addWidget(self.scan_bt, 0, 1)
+        record_frame.addWidget(self.scan_bt, 0, 1)
 
         self.stop_bt = qt.QPushButton("Stop")
         self.stop_bt.clicked[bool].connect(lambda val: self.stop())
-        record_box.frame.addWidget(self.stop_bt, 0, 2)
+        record_frame.addWidget(self.stop_bt, 0, 2)
         self.stop_bt.setEnabled(False)
 
-    def place_control_elements(self):
-        self.control_elem_box = Scrollarea(self, label="Camera Control", type="form")
-        self.frame.addWidget(self.control_elem_box)
+        record_frame.addWidget(qt.QLabel("Camera count:"), 1, 0, 1, 1)
+        self.camera_count = qt.QLabel()
+        self.camera_count.setText("0")
+        self.camera_count.setStyleSheet("background-color: gray; font: 20pt")
+        record_frame.addWidget(self.camera_count, 1, 1, 1, 2)
+
+        record_frame.addWidget(qt.QLabel("Cam. mean:"), 2, 0, 1, 1)
+        self.camera_count_mean = qt.QLabel()
+        self.camera_count_mean.setText("0")
+        self.camera_count_mean.setStyleSheet("background-color: gray; font: 20pt")
+        record_frame.addWidget(self.camera_count_mean, 2, 1, 1, 2)
+
+        record_frame.addWidget(qt.QLabel("Cam. error.:"), 3, 0, 1, 1)
+        self.camera_count_err_mean = qt.QLabel()
+        self.camera_count_err_mean.setText("0")
+        self.camera_count_err_mean.setStyleSheet("background-color: gray; font: 20pt")
+        record_frame.addWidget(self.camera_count_err_mean, 3, 1, 1, 2)
+
+    def place_image_control(self):
+        img_ctrl_box = Scrollarea(self, label="Image Control", type="form")
+        self.frame.addWidget(img_ctrl_box)
+
+        x_min = sensor_format_options[sensor_format_default][1][0]
+        x_max = sensor_format_options[sensor_format_default][1][1]
+        self.x_min_sb = qt.QSpinBox()
+        self.x_min_sb.setRange(x_min, x_max)
+        self.x_min_sb.setValue(x_min)
+        self.x_max_sb = qt.QSpinBox()
+        self.x_max_sb.setRange(x_min, x_max)
+        self.x_max_sb.setValue(x_max)
+        self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
+                                                self.range_change(text, val, sb))
+        self.x_max_sb.valueChanged[int].connect(lambda val, text='xmax', sb=self.x_min_sb:
+                                                self.range_change(text, val, sb))
+
+        x_range_box = qt.QWidget()
+        x_range_layout = qt.QHBoxLayout()
+        x_range_layout.setContentsMargins(0,0,0,0)
+        x_range_box.setLayout(x_range_layout)
+        x_range_layout.addWidget(self.x_min_sb)
+        x_range_layout.addWidget(self.x_max_sb)
+        img_ctrl_box.frame.addRow("X range:", x_range_box)
+
+        y_min = sensor_format_options[sensor_format_default][2][0]
+        y_max = sensor_format_options[sensor_format_default][2][1]
+        self.y_min_sb = qt.QSpinBox()
+        self.y_min_sb.setRange(y_min, y_max)
+        self.y_min_sb.setValue(y_min)
+        self.y_max_sb = qt.QSpinBox()
+        self.y_max_sb.setRange(y_min, y_max)
+        self.y_max_sb.setValue(y_max)
+        self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
+                                                self.range_change(text, val, sb))
+        self.y_max_sb.valueChanged[int].connect(lambda val, text='ymax', sb=self.y_min_sb:
+                                                self.range_change(text, val, sb))
+
+        y_range_box = qt.QWidget()
+        y_range_layout = qt.QHBoxLayout()
+        y_range_layout.setContentsMargins(0,0,0,0)
+        y_range_box.setLayout(y_range_layout)
+        y_range_layout.addWidget(self.y_min_sb)
+        y_range_layout.addWidget(self.y_max_sb)
+        img_ctrl_box.frame.addRow("Y range:", y_range_box)
+
+        self.num_image = qt.QLabel()
+        self.num_image.setText("0")
+        self.num_image.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("Num of recorded images:", self.num_image)
+
+        self.image_width = qt.QLabel()
+        self.image_width.setText("0")
+        self.image_width.setStyleSheet("background-color: gray;")
+        self.image_height = qt.QLabel()
+        self.image_height.setText("0")
+        self.image_height.setStyleSheet("background-color: gray;")
+        image_size_box = qt.QWidget()
+        image_size_layout = qt.QHBoxLayout()
+        image_size_layout.setContentsMargins(0,0,0,0)
+        image_size_box.setLayout(image_size_layout)
+        image_size_layout.addWidget(self.image_width)
+        image_size_layout.addWidget(self.image_height)
+        img_ctrl_box.frame.addRow("Image width x height:", image_size_box)
+
+        self.gauss_fit_chb = qt.QCheckBox()
+        self.gauss_fit_chb.setTristate(False)
+        self.gauss_fit_chb.setCheckState(0 if gaussian_fit_default in [False, 0, "False", "false"] else 2)
+        self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
+        self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.parent.device.set_gauss_fit(state))
+        img_ctrl_box.frame.addRow("2D gaussian fit:", self.gauss_fit_chb)
+
+        self.img_save_chb = qt.QCheckBox()
+        self.img_save_chb.setTristate(False)
+        self.img_save_chb.setCheckState(0 if img_auto_save_dafault in [False, 0, "False", "false"] else 2)
+        self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
+        self.img_save_chb.stateChanged[int].connect(lambda state: self.parent.device.set_img_save(state))
+        img_ctrl_box.frame.addRow("Image auto save:", self.img_save_chb)
+
+        img_ctrl_box.frame.addRow("------------------", qt.QWidget())
+
+        self.x_mean = qt.QLabel()
+        self.x_mean.setText("0")
+        self.x_mean.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (x mean):", self.x_mean)
+
+        self.x_stand_dev = qt.QLabel()
+        self.x_stand_dev.setText("0")
+        self.x_stand_dev.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (x stan. dev.):", self.x_stand_dev)
+
+        self.y_mean = qt.QLabel()
+        self.y_mean.setText("0")
+        self.y_mean.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (y mean):", self.y_mean)
+
+        self.y_stand_dev = qt.QLabel()
+        self.y_stand_dev.setText("0")
+        self.y_stand_dev.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (y stan. dev.):", self.y_stand_dev)
+
+        self.amp = qt.QLabel()
+        self.amp.setText("0")
+        self.amp.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (amp.):", self.amp)
+
+        self.offset = qt.QLabel()
+        self.offset.setText("0")
+        self.offset.setStyleSheet("background-color: gray;")
+        img_ctrl_box.frame.addRow("2D gaussian fit (offset):", self.offset)
+
+    def place_cam_control(self):
+        self.cam_ctrl_box = qt.QGroupBox("Camera Control")
+        cam_ctrl_frame = qt.QFormLayout()
+        self.cam_ctrl_box.setLayout(cam_ctrl_frame)
+        self.frame.addWidget(self.cam_ctrl_box)
 
         self.sensor_format_cb = qt.QComboBox()
         self.sensor_format_cb.setMaximumWidth(200)
@@ -250,7 +382,7 @@ class Cam_Control(qt.QWidget):
             self.sensor_format_cb.addItem(list(sensor_format_options.keys())[i])
         self.sensor_format_cb.setCurrentText(sensor_format_default)
         self.sensor_format_cb.activated[str].connect(lambda val: self.set_sensor_format(val))
-        self.control_elem_box.frame.addRow("Sensor size:", self.sensor_format_cb)
+        cam_ctrl_frame.addRow("Sensor size:", self.sensor_format_cb)
 
         self.clock_rate_cb = qt.QComboBox()
         self.clock_rate_cb.setMaximumWidth(200)
@@ -259,7 +391,7 @@ class Cam_Control(qt.QWidget):
             self.clock_rate_cb.addItem(list(clock_rate_options.keys())[i])
         self.clock_rate_cb.setCurrentText(clock_rate_default)
         self.clock_rate_cb.activated[str].connect(lambda val: self.parent.device.set_clock_rate(val))
-        self.control_elem_box.frame.addRow("Clock rate:", self.clock_rate_cb)
+        cam_ctrl_frame.addRow("Clock rate:", self.clock_rate_cb)
 
         self.conv_factor_cb = qt.QComboBox()
         self.conv_factor_cb.setMaximumWidth(200)
@@ -268,7 +400,7 @@ class Cam_Control(qt.QWidget):
             self.conv_factor_cb.addItem(list(conv_factor_options.keys())[i])
         self.conv_factor_cb.setCurrentText(conv_factor_default)
         self.conv_factor_cb.activated[str].connect(lambda val: self.parent.device.set_conv_factor(val))
-        self.control_elem_box.frame.addRow("Conversion factor:", self.conv_factor_cb)
+        cam_ctrl_frame.addRow("Conversion factor:", self.conv_factor_cb)
 
         self.trigger_mode_cb = qt.QComboBox()
         self.trigger_mode_cb.setMaximumWidth(200)
@@ -277,7 +409,7 @@ class Cam_Control(qt.QWidget):
             self.trigger_mode_cb.addItem(list(trigger_mode_options.keys())[i])
         self.trigger_mode_cb.setCurrentText(trigger_mode_default)
         self.trigger_mode_cb.activated[str].connect(lambda val: self.parent.device.set_trigger_mode(val))
-        self.control_elem_box.frame.addRow("Trigger mode:", self.trigger_mode_cb)
+        cam_ctrl_frame.addRow("Trigger mode:", self.trigger_mode_cb)
 
         self.trig_source_rblist = []
         trig_bg = qt.QButtonGroup(self.parent)
@@ -293,7 +425,7 @@ class Cam_Control(qt.QWidget):
             self.trig_source_rblist.append(trig_source_rb)
             trig_bg.addButton(trig_source_rb)
             trig_layout.addWidget(trig_source_rb)
-        self.control_elem_box.frame.addRow("Trigger source:", trig_box)
+        cam_ctrl_frame.addRow("Trigger source:", trig_box)
 
         self.expo_le = qt.QLineEdit() # try qt.QDoubleSpinBox() ?
         self.expo_le.setText(expo_time_default)
@@ -312,7 +444,7 @@ class Cam_Control(qt.QWidget):
         expo_box.setLayout(expo_layout)
         expo_layout.addWidget(self.expo_le)
         expo_layout.addWidget(self.expo_unit_cb)
-        self.control_elem_box.frame.addRow("Exposure time:", expo_box)
+        cam_ctrl_frame.addRow("Exposure time:", expo_box)
 
         self.bin_hori_sb = qt.QSpinBox()
         self.bin_hori_sb.setRange(1, binning_max)
@@ -329,76 +461,38 @@ class Cam_Control(qt.QWidget):
         bin_box.setLayout(bin_layout)
         bin_layout.addWidget(self.bin_hori_sb)
         bin_layout.addWidget(self.bin_vert_sb)
-        self.control_elem_box.frame.addRow("Binning H x V:", bin_box)
+        cam_ctrl_frame.addRow("Binning H x V:", bin_box)
 
         self.load_settings_bt = qt.QPushButton("load settings")
+        self.load_settings_bt.setMaximumWidth(200)
         self.load_settings_bt.clicked[bool].connect(lambda val: self.load_settings())
-        self.control_elem_box.frame.addRow("Load settings:", self.load_settings_bt)
+        cam_ctrl_frame.addRow("Load settings:", self.load_settings_bt)
 
         self.save_settings_bt = qt.QPushButton("save settings")
+        self.save_settings_bt.setMaximumWidth(200)
         self.save_settings_bt.clicked[bool].connect(lambda val: self.save_settings())
-        self.control_elem_box.frame.addRow("Save settings:", self.save_settings_bt)
-
-    def place_indicator_elements(self):
-        indicator_box = Scrollarea(self, label="Indicators", type="form")
-        self.frame.addWidget(indicator_box)
-
-
-
-        # self.cc_err_mean = qt.QLabel()
-        # self.cc_err_mean.setText("0")
-        # self.cc_err_mean.setStyleSheet("background-color: gray; font: 20pt")
-        # indicator_box.frame.addRow("Camera count error of mean:", self.cc_err_mean)
-
-        indicator_box.frame.addRow("------------------", qt.QWidget())
-
-        self.x_mean = qt.QLabel()
-        self.x_mean.setText("0")
-        self.x_mean.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (x mean):", self.x_mean)
-
-        self.x_stand_dev = qt.QLabel()
-        self.x_stand_dev.setText("0")
-        self.x_stand_dev.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (x stan. dev.):", self.x_stand_dev)
-
-        self.y_mean = qt.QLabel()
-        self.y_mean.setText("0")
-        self.y_mean.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (y mean):", self.y_mean)
-
-        self.y_stand_dev = qt.QLabel()
-        self.y_stand_dev.setText("0")
-        self.y_stand_dev.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (y stan. dev.):", self.y_stand_dev)
-
-        self.amp = qt.QLabel()
-        self.amp.setText("0")
-        self.amp.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (amp.):", self.amp)
-
-        self.offset = qt.QLabel()
-        self.offset.setText("0")
-        self.offset.setStyleSheet("background-color: gray;")
-        indicator_box.frame.addRow("2D gaussian fit (offset):", self.offset)
+        cam_ctrl_frame.addRow("Save settings:", self.save_settings_bt)
 
     def start(self):
         self.record_bt.setEnabled(False)
         self.scan_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
-        self.control_elem_box.setEnabled(False)
+        self.cam_ctrl_box.setEnabled(False)
 
     def scan(self):
         self.scan_bt.setEnabled(False)
         self.record_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
-        self.control_elem_box.setEnabled(False)
+        self.cam_ctrl_box.setEnabled(False)
 
     def stop(self):
         self.stop_bt.setEnabled(False)
         self.record_bt.setEnabled(True)
         self.scan_bt.setEnabled(True)
-        self.control_elem_box.setEnabled(True)
+        self.cam_ctrl_box.setEnabled(True)
+
+    def range_change(self):
+        pass
 
     def set_sensor_format(self, val):
         self.parent.device.set_sensor_format(val)
@@ -415,127 +509,7 @@ class Cam_Control(qt.QWidget):
         pass
 
 
-class Img_Control(Scrollarea):
-    def __init__(self, parent):
-        super().__init__(parent, label="Image Control", type="grid")
-
-        self.setMaximumHeight(200)
-        self.place_range_control()
-        self.place_num_image()
-        self.place_gauss_fit()
-        self.place_auto_save()
-        self.place_camera_count()
-
-    def place_range_control(self):
-        self.frame.addWidget(qt.QLabel("X range:"), 0, 0)
-        x_min = sensor_format_options[sensor_format_default][1][0]
-        x_max = sensor_format_options[sensor_format_default][1][1]
-        self.x_min_sb = qt.QSpinBox()
-        self.x_min_sb.setRange(x_min, x_max)
-        self.x_min_sb.setValue(x_min)
-        self.x_max_sb = qt.QSpinBox()
-        self.x_max_sb.setRange(x_min, x_max)
-        self.x_max_sb.setValue(x_max)
-        self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
-                                                self.range_change(text, val, sb))
-        self.x_max_sb.valueChanged[int].connect(lambda val, text='xmax', sb=self.x_min_sb:
-                                                self.range_change(text, val, sb))
-
-        x_range_box = qt.QWidget()
-        self.frame.addWidget(x_range_box, 0, 1)
-        x_range_layout = qt.QHBoxLayout()
-        x_range_layout.setContentsMargins(0,0,0,0)
-        x_range_box.setLayout(x_range_layout)
-        x_range_layout.addWidget(self.x_min_sb)
-        x_range_layout.addWidget(self.x_max_sb)
-
-        self.frame.addWidget(qt.QLabel("Y range:"), 1, 0)
-        y_min = sensor_format_options[sensor_format_default][2][0]
-        y_max = sensor_format_options[sensor_format_default][2][1]
-        self.y_min_sb = qt.QSpinBox()
-        self.y_min_sb.setRange(y_min, y_max)
-        self.y_min_sb.setValue(y_min)
-        self.y_max_sb = qt.QSpinBox()
-        self.y_max_sb.setRange(y_min, y_max)
-        self.y_max_sb.setValue(y_max)
-        self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
-                                                self.range_change(text, val, sb))
-        self.y_max_sb.valueChanged[int].connect(lambda val, text='ymax', sb=self.y_min_sb:
-                                                self.range_change(text, val, sb))
-
-        y_range_box = qt.QWidget()
-        self.frame.addWidget(y_range_box, 1, 1)
-        y_range_layout = qt.QHBoxLayout()
-        y_range_layout.setContentsMargins(0,0,0,0)
-        y_range_box.setLayout(y_range_layout)
-        y_range_layout.addWidget(self.y_min_sb)
-        y_range_layout.addWidget(self.y_max_sb)
-
-    def place_num_image(self):
-        self.frame.addWidget(qt.QLabel("Num of recorded images: "), 0, 2)
-        self.num_image = qt.QLabel()
-        self.num_image.setText("0")
-        self.num_image.setStyleSheet("background-color: gray;")
-        self.frame.addWidget(self.num_image, 0, 3)
-
-        self.frame.addWidget(qt.QLabel("Image width x height:"), 1, 2)
-        self.image_width = qt.QLabel()
-        self.image_width.setText("0")
-        self.image_width.setStyleSheet("background-color: gray;")
-        self.image_height = qt.QLabel()
-        self.image_height.setText("0")
-        self.image_height.setStyleSheet("background-color: gray;")
-        image_size_box = qt.QWidget()
-        image_size_layout = qt.QHBoxLayout()
-        image_size_layout.setContentsMargins(0,0,0,0)
-        image_size_box.setLayout(image_size_layout)
-        image_size_layout.addWidget(self.image_width)
-        image_size_layout.addWidget(self.image_height)
-        self.frame.addWidget(image_size_box, 1, 3)
-
-    def place_gauss_fit(self):
-        self.frame.addWidget(qt.QLabel("2D gaussian fit:"), 0, 4)
-        self.gauss_fit_chb = qt.QCheckBox()
-        self.gauss_fit_chb.setTristate(False)
-        self.gauss_fit_chb.setCheckState(0 if gaussian_fit_default in [False, 0, "False", "false"] else 2)
-        self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 18px; height: 18px;}")
-        self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.parent.device.set_gauss_fit(state))
-        self.frame.addWidget(self.gauss_fit_chb, 0, 5)
-
-    def place_auto_save(self):
-        self.frame.addWidget(qt.QLabel("Image auto save:"), 1, 4)
-        self.img_save_chb = qt.QCheckBox()
-        self.img_save_chb.setTristate(False)
-        self.img_save_chb.setCheckState(0 if img_auto_save_dafault in [False, 0, "False", "false"] else 2)
-        self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 18px; height: 18px;}")
-        self.img_save_chb.stateChanged[int].connect(lambda state: self.parent.device.set_img_save(state))
-        self.frame.addWidget(self.img_save_chb, 1, 5)
-
-    def place_camera_count(self):
-        self.frame.addWidget(qt.QLabel("Camera count:"), 2, 0, 1, 2)
-        self.camera_count = qt.QLabel()
-        self.camera_count.setMaximumWidth(200)
-        self.camera_count.setText("0")
-        self.camera_count.setStyleSheet("background-color: gray; font: 20pt")
-        self.frame.addWidget(self.camera_count, 3, 0, 1, 2)
-
-        self.frame.addWidget(qt.QLabel("Camera count mean:"), 2, 2, 1, 2)
-        self.camera_count_mean = qt.QLabel()
-        self.camera_count_mean.setText("0")
-        self.camera_count_mean.setStyleSheet("background-color: gray; font: 20pt")
-        self.frame.addWidget(self.camera_count_mean, 3, 2, 1, 2)
-
-        self.frame.addWidget(qt.QLabel("Camera count error of mean:"), 2, 4, 1, 2)
-        self.camera_count_err_mean = qt.QLabel()
-        self.camera_count_err_mean.setText("0")
-        self.camera_count_err_mean.setStyleSheet("background-color: gray; font: 20pt")
-        self.frame.addWidget(self.camera_count_err_mean, 3, 4, 1, 2)
-
-    def range_change(self):
-        pass
-
-
-class Image(Scrollarea):
+class ImageWin(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="Images", type="grid")
 
@@ -559,6 +533,7 @@ class Image(Scrollarea):
         data = fake_data(x_range=20, y_range=20, x_center=10, y_center=10, x_err=5, y_err=3)
         self.bg_img.setImage(data)
 
+
 class CameraGUI(qt.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -566,19 +541,14 @@ class CameraGUI(qt.QMainWindow):
         self.setStyleSheet("QWidget{font: 10pt;}")
 
         self.device = pixelfly(self)
-        self.cam_control = Cam_Control(self)
-        self.img_control = Img_Control(self)
-        self.image = Image(self)
+        self.control = Control(self)
+        self.image_win = ImageWin(self)
 
-        self.splitter1 = qt.QSplitter()
-        self.splitter2 = qt.QSplitter()
-        self.splitter1.setOrientation(PyQt5.QtCore.Qt.Horizontal)
-        self.splitter2.setOrientation(PyQt5.QtCore.Qt.Vertical)
-        self.setCentralWidget(self.splitter1)
-        self.splitter1.addWidget(self.splitter2)
-        self.splitter1.addWidget(self.cam_control)
-        self.splitter2.addWidget(self.img_control)
-        self.splitter2.addWidget(self.image)
+        self.splitter = qt.QSplitter()
+        self.splitter.setOrientation(PyQt5.QtCore.Qt.Horizontal)
+        self.setCentralWidget(self.splitter)
+        self.splitter.addWidget(self.image_win)
+        self.splitter.addWidget(self.control)
 
         self.resize(1600, 900)
         self.show()
