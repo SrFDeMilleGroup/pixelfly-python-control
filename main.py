@@ -112,6 +112,7 @@ class Scrollarea(qt.QGroupBox):
         self.parent = parent
         self.setTitle(label)
         outer_layout = qt.QGridLayout()
+        outer_layout.setContentsMargins(0,0,0,0)
         self.setLayout(outer_layout)
 
         scroll = qt.QScrollArea()
@@ -125,6 +126,10 @@ class Scrollarea(qt.QGroupBox):
             self.frame = qt.QFormLayout()
         elif type == "grid":
             self.frame = qt.QGridLayout()
+        elif type == "vbox":
+            self.frame = qt.QVBoxLayout()
+        elif type == "hbox":
+            self.frame = qt.QHBoxLayout()
         else:
             self.frame = qt.QGridLayout()
             print("Frame type not supported!")
@@ -208,14 +213,11 @@ class pixelfly:
         pass
 
 
-class Control(qt.QWidget):
+class Control(Scrollarea):
     def __init__(self, parent):
-        super().__init__()
-        self.parent = parent
-        self.setMaximumWidth(370)
-        self.frame = qt.QVBoxLayout()
-        self.setLayout(self.frame)
-        self.frame.setSpacing(0)
+        super().__init__(parent, label="", type="vbox")
+        self.setMaximumWidth(400)
+        self.frame.setContentsMargins(0,0,0,0)
 
         self.place_recording()
         self.place_image_control()
@@ -223,6 +225,8 @@ class Control(qt.QWidget):
 
     def place_recording(self):
         record_box = qt.QGroupBox("Recording")
+        record_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
+        record_box.setMaximumHeight(180)
         record_frame = qt.QGridLayout()
         record_box.setLayout(record_frame)
         self.frame.addWidget(record_box)
@@ -259,7 +263,10 @@ class Control(qt.QWidget):
         record_frame.addWidget(self.camera_count_err_mean, 3, 1, 1, 2)
 
     def place_image_control(self):
-        img_ctrl_box = Scrollarea(self, label="Image Control", type="form")
+        img_ctrl_box = qt.QGroupBox("Image Control")
+        img_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
+        img_ctrl_frame = qt.QFormLayout()
+        img_ctrl_box.setLayout(img_ctrl_frame)
         self.frame.addWidget(img_ctrl_box)
 
         x_min = sensor_format_options[sensor_format_default][1][0]
@@ -281,7 +288,7 @@ class Control(qt.QWidget):
         x_range_box.setLayout(x_range_layout)
         x_range_layout.addWidget(self.x_min_sb)
         x_range_layout.addWidget(self.x_max_sb)
-        img_ctrl_box.frame.addRow("X range:", x_range_box)
+        img_ctrl_frame.addRow("X range:", x_range_box)
 
         y_min = sensor_format_options[sensor_format_default][2][0]
         y_max = sensor_format_options[sensor_format_default][2][1]
@@ -302,12 +309,12 @@ class Control(qt.QWidget):
         y_range_box.setLayout(y_range_layout)
         y_range_layout.addWidget(self.y_min_sb)
         y_range_layout.addWidget(self.y_max_sb)
-        img_ctrl_box.frame.addRow("Y range:", y_range_box)
+        img_ctrl_frame.addRow("Y range:", y_range_box)
 
         self.num_image = qt.QLabel()
         self.num_image.setText("0")
         self.num_image.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("Num of recorded images:", self.num_image)
+        img_ctrl_frame.addRow("Num of recorded images:", self.num_image)
 
         self.image_width = qt.QLabel()
         self.image_width.setText("0")
@@ -321,56 +328,57 @@ class Control(qt.QWidget):
         image_size_box.setLayout(image_size_layout)
         image_size_layout.addWidget(self.image_width)
         image_size_layout.addWidget(self.image_height)
-        img_ctrl_box.frame.addRow("Image width x height:", image_size_box)
+        img_ctrl_frame.addRow("Image width x height:", image_size_box)
 
         self.gauss_fit_chb = qt.QCheckBox()
         self.gauss_fit_chb.setTristate(False)
         self.gauss_fit_chb.setCheckState(0 if gaussian_fit_default in [False, 0, "False", "false"] else 2)
         self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.parent.device.set_gauss_fit(state))
-        img_ctrl_box.frame.addRow("2D gaussian fit:", self.gauss_fit_chb)
+        img_ctrl_frame.addRow("2D gaussian fit:", self.gauss_fit_chb)
 
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
         self.img_save_chb.setCheckState(0 if img_auto_save_dafault in [False, 0, "False", "false"] else 2)
         self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.img_save_chb.stateChanged[int].connect(lambda state: self.parent.device.set_img_save(state))
-        img_ctrl_box.frame.addRow("Image auto save:", self.img_save_chb)
+        img_ctrl_frame.addRow("Image auto save:", self.img_save_chb)
 
-        img_ctrl_box.frame.addRow("------------------", qt.QWidget())
+        img_ctrl_frame.addRow("------------------", qt.QWidget())
 
         self.x_mean = qt.QLabel()
         self.x_mean.setText("0")
         self.x_mean.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (x mean):", self.x_mean)
+        img_ctrl_frame.addRow("2D gaussian fit (x mean):", self.x_mean)
 
         self.x_stand_dev = qt.QLabel()
         self.x_stand_dev.setText("0")
         self.x_stand_dev.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (x stan. dev.):", self.x_stand_dev)
+        img_ctrl_frame.addRow("2D gaussian fit (x stan. dev.):", self.x_stand_dev)
 
         self.y_mean = qt.QLabel()
         self.y_mean.setText("0")
         self.y_mean.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (y mean):", self.y_mean)
+        img_ctrl_frame.addRow("2D gaussian fit (y mean):", self.y_mean)
 
         self.y_stand_dev = qt.QLabel()
         self.y_stand_dev.setText("0")
         self.y_stand_dev.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (y stan. dev.):", self.y_stand_dev)
+        img_ctrl_frame.addRow("2D gaussian fit (y stan. dev.):", self.y_stand_dev)
 
         self.amp = qt.QLabel()
         self.amp.setText("0")
         self.amp.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (amp.):", self.amp)
+        img_ctrl_frame.addRow("2D gaussian fit (amp.):", self.amp)
 
         self.offset = qt.QLabel()
         self.offset.setText("0")
         self.offset.setStyleSheet("background-color: gray;")
-        img_ctrl_box.frame.addRow("2D gaussian fit (offset):", self.offset)
+        img_ctrl_frame.addRow("2D gaussian fit (offset):", self.offset)
 
     def place_cam_control(self):
         self.cam_ctrl_box = qt.QGroupBox("Camera Control")
+        self.cam_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid gray;}")
         cam_ctrl_frame = qt.QFormLayout()
         self.cam_ctrl_box.setLayout(cam_ctrl_frame)
         self.frame.addWidget(self.cam_ctrl_box)
@@ -512,26 +520,74 @@ class Control(qt.QWidget):
 class ImageWin(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="Images", type="grid")
-
-        self.place_plots()
-
-    def place_plots(self):
         self.colormap = steal_colormap()
+        self.frame.setColumnStretch(0,1)
+        self.frame.setColumnStretch(1,1)
+        self.frame.setRowStretch(0,1)
+        self.frame.setRowStretch(1,1)
+        self.frame.setRowStretch(2,1)
+        self.imgs_dict = {}
+        self.imgs_name = ["background", "signal", "signal w/ bg subtraction"]
 
-        self.bg_graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
-        self.frame.addWidget(self.bg_graphlayout)
+        self.place_sgn_imgs()
+        self.place_axis_plots()
+        self.place_ave_image()
+        self.place_scan_plot()
 
-        self.bg_plot = self.bg_graphlayout.addPlot(title="Background")
-        self.bg_img = pg.ImageItem()
-        self.bg_plot.addItem(self.bg_img)
+    def place_sgn_imgs(self):
+        self.img_tab = qt.QTabWidget()
+        self.frame.addWidget(self.img_tab, 0, 0, 2, 1)
+        for i, name in enumerate(self.imgs_name):
+            graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
+            self.img_tab.addTab(graphlayout, name)
+            plot = graphlayout.addPlot(title=name)
+            img = pg.ImageItem()
+            plot.addItem(img)
 
-        self.bg_hist = pg.HistogramLUTItem()
-        self.bg_hist.setImageItem(self.bg_img)
-        self.bg_graphlayout.addItem(self.bg_hist)
-        self.bg_hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
+            hist = pg.HistogramLUTItem()
+            hist.setImageItem(img)
+            graphlayout.addItem(hist)
+            hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
-        data = fake_data(x_range=20, y_range=20, x_center=10, y_center=10, x_err=5, y_err=3)
-        self.bg_img.setImage(data)
+            self.data = fake_data(x_range=20, y_range=30, x_center=6, y_center=10, x_err=5, y_err=5)
+            img.setImage(self.data)
+
+            self.imgs_dict[name] = img
+
+    def place_axis_plots(self):
+        x_data = np.sum(self.data, axis=1)
+        x_plot_widget = pg.PlotWidget(border=True)
+        x_plot_widget.showGrid(True, True)
+        self.x_plot = x_plot_widget.plot(x_data)
+        self.frame.addWidget(x_plot_widget, 0, 1)
+
+        y_data = np.sum(self.data, axis=0)
+        y_plot_widget = pg.PlotWidget()
+        y_plot_widget.showGrid(True, True)
+        self.y_plot = y_plot_widget.plot(y_data)
+        self.frame.addWidget(y_plot_widget, 1, 1)
+
+    def place_ave_image(self):
+        graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
+        self.frame.addWidget(graphlayout, 2, 0)
+        plot = graphlayout.addPlot(title="Average image")
+        self.ave_img = pg.ImageItem()
+        plot.addItem(self.ave_img)
+        hist = pg.HistogramLUTItem()
+        hist.setImageItem(self.ave_img)
+        graphlayout.addItem(hist)
+        hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
+
+        data = fake_data()/10
+        for i in range(9):
+            data += fake_data()/10
+        self.ave_img.setImage(data)
+
+    def place_scan_plot(self):
+        scan_plot_widget = pg.PlotWidget()
+        scan_plot_widget.showGrid(True, True)
+        self.scan_plot = scan_plot_widget.plot()
+        self.frame.addWidget(scan_plot_widget, 2, 1)
 
 
 class CameraGUI(qt.QMainWindow):
