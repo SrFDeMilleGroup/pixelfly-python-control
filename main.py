@@ -65,29 +65,41 @@ import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 # dwGeneralCapsDESC3: 0
 # dwGeneralCapsDESC4: 0
 
-sensor_format_options = {"standard (1392*1040)": ("standard", (0, 1391), (0, 1039)),
-                        "extended (800*600)": ("extended", (0, 799), (0, 599))}
-sensor_format_default = list(sensor_format_options.keys())[0]
+# because of python's
+# default values of camera control parameters
+sensor_format_options = {"standard (1392*1040)": {"format": "standard",
+                                                  "range": {"xmin": 0, "xmax": 1391, "ymin": 0, "ymax": 1039}},
+                        "extended (800*600)": {"format": "extended",
+                                               "range": {"xmin": 0, "xmax": 799, "ymin": 0, "ymax": 599}}}
+sensor_format_default = "standard (1392*1040)"
+
 clock_rate_options = {"12 MHz": 12000000, "24 MHz": 24000000}
-clock_rate_default = list(clock_rate_options.keys())[0]
+clock_rate_default = "12 MHz"
+
 conv_factor_options = {"1": 100, "1.5": 150} # 100/gain, or electrons/count*100
-conv_factor_default = list(conv_factor_options.keys())[0]
+conv_factor_default = "1"
+
 trigger_mode_options = {"auto sequence": "auto sequence", "software trigger": "software trigger",
                         "external/software trigger": "external exposure start & software trigger"}
-trigger_mode_default = list(trigger_mode_options.keys())[2]
+trigger_mode_default = "external/software trigger"
 trigger_source_options = ["software", "external TTL"]
-trigger_source_default = trigger_source_options[1]
+trigger_source_default = "external TTL"
+
 expo_unit_options = {"ms": 1e-3, "us": 1e-6} # unit "ns" is not implemented bacause the min expo time is 1000 ns = 1 us
-expo_unit_default = list(expo_unit_options.keys())[0]
+expo_unit_default = "ms"
 expo_time_default = "10" # in the unit of expo_unit_default
 expo_min = 1000e-9 # Min Expos DESC in ns
 expo_max = 60000e-3 # Max Expos DESC in ms
 expo_decimals = 6 # converted from Min Expos Step DESC in ns
+
 binning_max = 4 # same for both horizontal and vertical
 binning_default = (1, 1) # (horizontal, vertical)
+
+# default values of image control parameters
+num_img_to_take_default = 10
+img_range_default = sensor_format_options[sensor_format_default]["range"]
 gaussian_fit_default = False
 img_auto_save_default = True
-num_img_to_take_default = 10
 
 # steal colormap datat from matplotlib
 def steal_colormap(colorname="viridis", lut=12):
@@ -103,7 +115,7 @@ def steal_colormap(colorname="viridis", lut=12):
 def fake_data(x_range=30, y_range=20, x_center=20, y_center=12, x_err=5, y_err=5, amp=10000):
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
-    gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))*amp/20
+    gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))/10*amp
     gauss = gauss.astype("uint16")
 
     return gauss
@@ -143,22 +155,29 @@ class CamThread(PyQt5.QtCore.QThread):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
+        self.counter = 0
+        self.parent.device.cam.record(number_of_images=4, mode='ring buffer')
+        # number_of_images is buffer size in ring buffer mode, and has to be at least 4
+        self.last_time = time.time()
 
     def run(self):
-        self.counter = 0
-        self.timer = PyQt5.QtCore.QTimer()
-        self.timer.timeout.connect(self.update)
-        self.timer.start(700)
+        while self.counter < self.parent.device.num_img_to_take:
+            self.counter += 1
+            while True:
+                if self.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
+                    print(self.cam.rec.get_status()['dwProcImgCount'])
+                    break
+                time.sleep(0.001)
 
-    def update(self):
-        data = np.random.randint(low=0, high=1000, size=(200, 200), dtype=np.uint16)
-        self.parent.image_win.imgs_dict["Background"].setImage(data)
-        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+            image, meta = self.cam.image(image_number=0xFFFFFFFF) # readout the last image
+            data = np.flip(image.T, 1)
+            self.parent.image_win.imgs_dict["Background"].setImage(data)
+            self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+            self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+            print(f"{self.counter}: "+"{:.5f}".format(time.time() - self.last_time))
 
-        self.counter += 1
-        if self.counter == 10:
-            self.timer.stop()
+        self.parent.app.processEvents()
+        self.parent.device.cam.stop()
 
 
 class pixelfly:
@@ -166,26 +185,41 @@ class pixelfly:
         self.parent = parent
         self.counter = 0
 
-        try:
-            self.cam = pco.Camera(interface='USB 2.0')
-        except Exception as err:
-            logging.error(traceback.format_exc())
-            logging.error("Can't open camera")
-            return
+        # try:
+        #     self.cam = pco.Camera(interface='USB 2.0')
+        # except Exception as err:
+        #     logging.error(traceback.format_exc())
+        #     logging.error("Can't open camera")
+        #     return
 
-        self.set_sensor_format(sensor_format_default)
-        self.set_clock_rate(clock_rate_default)
-        self.set_conv_factor(conv_factor_default)
-        self.set_trigger_mode(trigger_mode_default)
-        self.trigger_source = trigger_source_default
-        self.set_expo_time(expo_time_default, expo_unit_default)
-        self.set_binning(binning_default[0], binning_default[1])
+        self.num_img_to_take = num_img_to_take_default
+        self.img_range = img_range_default.copy()
         self.gaussian_fit = gaussian_fit_default
         self.img_save = img_auto_save_default
-        self.num_img_to_take = num_img_to_take_default
+
+        # self.set_sensor_format(sensor_format_default)
+        # self.set_clock_rate(clock_rate_default)
+        # self.set_conv_factor(conv_factor_default)
+        # self.set_trigger_mode(trigger_mode_default)
+        # self.trigger_source = trigger_source_default
+        # self.set_expo_time(expo_time_default, expo_unit_default)
+        # self.set_binning(binning_default[0], binning_default[1])
+
+    def set_num_img(self, val):
+        self.num_img_to_take = val
+
+    def set_img_range(self, text, val):
+        self.img_range[text] = val
+        print(self.img_range)
+
+    def set_gauss_fit(self, state):
+        self.gaussian_fit = state
+
+    def set_img_save(self, state):
+        self.img_save = state
 
     def set_sensor_format(self, arg):
-        self.cam.sdk.set_sensor_format(sensor_format_options[arg][0])
+        self.cam.sdk.set_sensor_format(sensor_format_options[arg]["format"])
         self.cam.sdk.arm_camera()
 
     def set_clock_rate(self, arg):
@@ -229,37 +263,6 @@ class pixelfly:
     def set_binning(self, bin_h, bin_v):
         self.cam.configuration = {'binning': (int(bin_h), int(bin_v))}
 
-    def set_gauss_fit(self, state):
-        self.gaussian_fit = state
-
-    def set_img_save(self, state):
-        self.img_save = state
-
-    def set_num_img(self, val):
-        self.num_img_to_take = val
-
-    def recording(self):
-        # data = fake_data(x_range=2000, y_range=3000, x_center=1400, y_center=1500, x_err=500, y_err=500)
-        self.counter += 1
-        while True:
-            if self.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
-                # print(self.cam.rec.get_status()['dwProcImgCount'])
-                break
-            time.sleep(0.001)
-        image, meta = self.cam.image(image_number=0xFFFFFFFF) # readout the last image
-        data = np.flip(image.T, 1)
-        self.parent.image_win.imgs_dict["Background"].setImage(data)
-        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
-
-
-        # print(f"{self.counter}: "+"{:.5f}".format(time.time()-self.parent.control.last_time))
-        if self.counter == self.num_img_to_take:
-            self.parent.app.processEvents()
-            self.parent.control.timer.stop()
-            self.cam.stop()
-            self.counter = 0
-
     def load_configs(self):
         pass
 
@@ -277,7 +280,7 @@ class Control(Scrollarea):
     def place_recording(self):
         record_box = qt.QGroupBox("Recording")
         record_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
-        record_box.setMaximumHeight(180)
+        record_box.setMaximumHeight(270)
         record_frame = qt.QGridLayout()
         record_box.setLayout(record_frame)
         self.frame.addWidget(record_box)
@@ -313,6 +316,16 @@ class Control(Scrollarea):
         self.camera_count_err_mean.setStyleSheet("background-color: gray; font: 20pt")
         record_frame.addWidget(self.camera_count_err_mean, 3, 1, 1, 2)
 
+        self.save_settings_bt = qt.QPushButton("save settings")
+        # self.save_settings_bt.setMaximumWidth(200)
+        self.save_settings_bt.clicked[bool].connect(lambda val: self.save_settings())
+        record_frame.addWidget(self.save_settings_bt, 4, 0, 1, 3)
+
+        self.load_settings_bt = qt.QPushButton("load settings")
+        self.load_settings_bt.setMaximumWidth(200)
+        self.load_settings_bt.clicked[bool].connect(lambda val: self.load_settings())
+        record_frame.addWidget(self.load_settings_bt, 5, 0, 1, 3)
+
     def place_image_control(self):
         img_ctrl_box = qt.QGroupBox("Image Control")
         img_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -326,18 +339,18 @@ class Control(Scrollarea):
         num_img_to_take.valueChanged[int].connect(lambda val: self.parent.device.set_num_img(val))
         img_ctrl_frame.addRow("Num of image to take:", num_img_to_take)
 
-        x_min = sensor_format_options[sensor_format_default][1][0]
-        x_max = sensor_format_options[sensor_format_default][1][1]
+        x_min = sensor_format_options[sensor_format_default]["range"]["xmin"]
+        x_max = sensor_format_options[sensor_format_default]["range"]["xmax"]
         self.x_min_sb = qt.QSpinBox()
-        self.x_min_sb.setRange(x_min, x_max)
-        self.x_min_sb.setValue(x_min)
+        self.x_min_sb.setRange(x_min, x_max-1)
+        self.x_min_sb.setValue(img_range_default["xmin"])
         self.x_max_sb = qt.QSpinBox()
-        self.x_max_sb.setRange(x_min, x_max)
-        self.x_max_sb.setValue(x_max)
+        self.x_max_sb.setRange(x_min+1, x_max)
+        self.x_max_sb.setValue(img_range_default["xmax"])
         self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
-                                                self.range_change(text, val, sb))
+                                                self.set_img_range(text, val, sb))
         self.x_max_sb.valueChanged[int].connect(lambda val, text='xmax', sb=self.x_min_sb:
-                                                self.range_change(text, val, sb))
+                                                self.set_img_range(text, val, sb))
 
         x_range_box = qt.QWidget()
         x_range_layout = qt.QHBoxLayout()
@@ -347,18 +360,18 @@ class Control(Scrollarea):
         x_range_layout.addWidget(self.x_max_sb)
         img_ctrl_frame.addRow("X range:", x_range_box)
 
-        y_min = sensor_format_options[sensor_format_default][2][0]
-        y_max = sensor_format_options[sensor_format_default][2][1]
+        y_min = sensor_format_options[sensor_format_default]["range"]["ymin"]
+        y_max = sensor_format_options[sensor_format_default]["range"]["ymax"]
         self.y_min_sb = qt.QSpinBox()
-        self.y_min_sb.setRange(y_min, y_max)
-        self.y_min_sb.setValue(y_min)
+        self.y_min_sb.setRange(y_min, y_max-1)
+        self.y_min_sb.setValue(img_range_default["ymin"])
         self.y_max_sb = qt.QSpinBox()
-        self.y_max_sb.setRange(y_min, y_max)
-        self.y_max_sb.setValue(y_max)
+        self.y_max_sb.setRange(y_min+1, y_max)
+        self.y_max_sb.setValue(img_range_default["xmax"])
         self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
-                                                self.range_change(text, val, sb))
+                                                self.set_img_range(text, val, sb))
         self.y_max_sb.valueChanged[int].connect(lambda val, text='ymax', sb=self.y_min_sb:
-                                                self.range_change(text, val, sb))
+                                                self.set_img_range(text, val, sb))
 
         y_range_box = qt.QWidget()
         y_range_layout = qt.QHBoxLayout()
@@ -447,7 +460,7 @@ class Control(Scrollarea):
             self.sensor_format_cb.addItem(list(sensor_format_options.keys())[i])
         self.sensor_format_cb.setCurrentText(sensor_format_default)
         self.sensor_format_cb.activated[str].connect(lambda val: self.set_sensor_format(val))
-        cam_ctrl_frame.addRow("Sensor size:", self.sensor_format_cb)
+        cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
         self.clock_rate_cb = qt.QComboBox()
         self.clock_rate_cb.setMaximumWidth(200)
@@ -528,31 +541,20 @@ class Control(Scrollarea):
         bin_layout.addWidget(self.bin_vert_sb)
         cam_ctrl_frame.addRow("Binning H x V:", bin_box)
 
-        self.load_settings_bt = qt.QPushButton("load settings")
-        self.load_settings_bt.setMaximumWidth(200)
-        self.load_settings_bt.clicked[bool].connect(lambda val: self.load_settings())
-        cam_ctrl_frame.addRow("Load settings:", self.load_settings_bt)
-
-        self.save_settings_bt = qt.QPushButton("save settings")
-        self.save_settings_bt.setMaximumWidth(200)
-        self.save_settings_bt.clicked[bool].connect(lambda val: self.save_settings())
-        cam_ctrl_frame.addRow("Save settings:", self.save_settings_bt)
-
     def record(self):
         self.record_bt.setEnabled(False)
         self.scan_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
         self.cam_ctrl_box.setEnabled(False)
+        self.parent.app.processEvents()
 
-        # self.t = CamThread(self.parent)
-        # self.t.start()
-        self.parent.device.cam.record(number_of_images=5, mode='ring buffer')
-        # number_of_images is buffer size in ring buffer mode
+        self.rec = CamThread(self.parent)
+        self.rec.start()
 
-        self.timer = PyQt5.QtCore.QTimer()
-        self.timer.timeout.connect(self.parent.device.recording)
-        self.timer.start(0)
-        self.last_time = time.time()
+        # Another way to do this is to use QTimer() to trigger imgae image readout,
+        # but in that case, image readout is still running in the main thread,
+        # so it will block the main thread.
+
 
     def scan(self):
         self.scan_bt.setEnabled(False)
@@ -568,21 +570,35 @@ class Control(Scrollarea):
         self.scan_bt.setEnabled(True)
         self.cam_ctrl_box.setEnabled(True)
 
-    def range_change(self):
-        pass
+    def set_img_range(self, text, val, sb):
+        if text == "xmin":
+            sb.setMinimum(val+1)
+        elif text == "xmax":
+            sb.setMaximum(val-1)
+        elif text == "ymin":
+            sb.setMinimum(val+1)
+        elif text == "ymax":
+            sb.setMaximum(val-1)
+
+        self.parent.device.set_img_range(text, val)
+        print("finished!!!!!!!!!!!!!")
 
     def set_sensor_format(self, val):
+        x_max = sensor_format_options[val]["range"]["xmax"]
+        self.x_max_sb.setMaximum(x_max)
+        y_max = sensor_format_options[val]["range"]["ymax"]
+        self.y_max_sb.setMaximum(y_max)
+        # number in both 'min' and 'max' spinboxes will adjusted automatically
         self.parent.device.set_sensor_format(val)
-        # to-do: modify plots range spinboxes
 
     def set_expo_time(self, time, unit):
         t = self.parent.device.set_expo_time(time, unit)
         self.expo_le.setText(t)
 
-    def load_settings(self):
+    def save_settings(self):
         pass
 
-    def save_settings(self):
+    def load_settings(self):
         pass
 
 
