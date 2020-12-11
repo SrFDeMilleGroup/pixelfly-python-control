@@ -86,7 +86,8 @@ expo_decimals = 6 # converted from Min Expos Step DESC in ns
 binning_max = 4 # same for both horizontal and vertical
 binning_default = (1, 1) # (horizontal, vertical)
 gaussian_fit_default = False
-img_auto_save_dafault = True
+img_auto_save_default = True
+num_img_to_take_default = 10
 
 # steal colormap datat from matplotlib
 def steal_colormap(colorname="viridis", lut=12):
@@ -99,7 +100,7 @@ def steal_colormap(colorname="viridis", lut=12):
 
     return colordata_reform
 
-def fake_data(x_range=20, y_range=30, x_center=14, y_center=20, x_err=5, y_err=5, amp=10000):
+def fake_data(x_range=30, y_range=20, x_center=20, y_center=12, x_err=5, y_err=5, amp=10000):
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
     gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))*amp/20
@@ -163,6 +164,7 @@ class CamThread(PyQt5.QtCore.QThread):
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
+        self.counter = 0
 
         try:
             self.cam = pco.Camera(interface='USB 2.0')
@@ -180,6 +182,7 @@ class pixelfly:
         self.set_binning(binning_default[0], binning_default[1])
         self.gaussian_fit = gaussian_fit_default
         self.img_save = img_auto_save_default
+        self.num_img_to_take = num_img_to_take_default
 
     def set_sensor_format(self, arg):
         self.cam.sdk.set_sensor_format(sensor_format_options[arg][0])
@@ -231,6 +234,31 @@ class pixelfly:
 
     def set_img_save(self, state):
         self.img_save = state
+
+    def set_num_img(self, val):
+        self.num_img_to_take = val
+
+    def recording(self):
+        # data = fake_data(x_range=2000, y_range=3000, x_center=1400, y_center=1500, x_err=500, y_err=500)
+        self.counter += 1
+        while True:
+            if self.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
+                # print(self.cam.rec.get_status()['dwProcImgCount'])
+                break
+            time.sleep(0.001)
+        image, meta = self.cam.image(image_number=0xFFFFFFFF) # readout the last image
+        data = np.flip(image.T, 1)
+        self.parent.image_win.imgs_dict["Background"].setImage(data)
+        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
+        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
+
+
+        # print(f"{self.counter}: "+"{:.5f}".format(time.time()-self.parent.control.last_time))
+        if self.counter == self.num_img_to_take:
+            self.parent.app.processEvents()
+            self.parent.control.timer.stop()
+            self.cam.stop()
+            self.counter = 0
 
     def load_configs(self):
         pass
@@ -291,6 +319,12 @@ class Control(Scrollarea):
         img_ctrl_frame = qt.QFormLayout()
         img_ctrl_box.setLayout(img_ctrl_frame)
         self.frame.addWidget(img_ctrl_box)
+
+        num_img_to_take = qt.QSpinBox()
+        num_img_to_take.setRange(1, 1000000)
+        num_img_to_take.setValue(num_img_to_take_default)
+        num_img_to_take.valueChanged[int].connect(lambda val: self.parent.device.set_num_img(val))
+        img_ctrl_frame.addRow("Num of image to take:", num_img_to_take)
 
         x_min = sensor_format_options[sensor_format_default][1][0]
         x_max = sensor_format_options[sensor_format_default][1][1]
@@ -362,7 +396,7 @@ class Control(Scrollarea):
 
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
-        self.img_save_chb.setCheckState(0 if img_auto_save_dafault in [False, 0, "False", "false"] else 2)
+        self.img_save_chb.setCheckState(0 if img_auto_save_default in [False, 0, "False", "false"] else 2)
         self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.img_save_chb.stateChanged[int].connect(lambda state: self.parent.device.set_img_save(state))
         img_ctrl_frame.addRow("Image auto save:", self.img_save_chb)
@@ -512,23 +546,13 @@ class Control(Scrollarea):
 
         # self.t = CamThread(self.parent)
         # self.t.start()
+        self.parent.device.cam.record(number_of_images=5, mode='ring buffer')
+        # number_of_images is buffer size in ring buffer mode
 
-        self.counter = 0
         self.timer = PyQt5.QtCore.QTimer()
-        self.timer.timeout.connect(self.update)
-        self.timer.start(2000)
-
-    def update(self):
-        # data = fake_data(x_range=2000, y_range=3000, x_center=1400, y_center=1500, x_err=500, y_err=500)
-        self.parent.device.cam.record()
-        image, meta = self.parent.device.cam.image()
-        data = image
-        self.parent.image_win.imgs_dict["Background"].setImage(data)
-        self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-        self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
-        self.counter += 1
-        if self.counter == 10:
-            self.timer.stop()
+        self.timer.timeout.connect(self.parent.device.recording)
+        self.timer.start(0)
+        self.last_time = time.time()
 
     def scan(self):
         self.scan_bt.setEnabled(False)
@@ -566,7 +590,7 @@ class ImageWin(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="Images", type="grid")
         self.colormap = steal_colormap()
-        self.frame.setColumnStretch(0,1)
+        self.frame.setColumnStretch(0,2)
         self.frame.setColumnStretch(1,1)
         self.frame.setRowStretch(0,1)
         self.frame.setRowStretch(1,1)
