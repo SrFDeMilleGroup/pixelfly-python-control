@@ -18,7 +18,7 @@ import pco
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 
 
-# steal colormap datat from matplotlib
+# steal colormap data from matplotlib
 def steal_colormap(colorname="viridis", lut=12):
     color = cm.get_cmap(colorname, lut)
     colordata = color(range(lut)) # (r, g, b, a=opacity)
@@ -69,49 +69,58 @@ class Scrollarea(qt.QGroupBox):
 
 
 class CamThread(PyQt5.QtCore.QThread):
+    signal = PyQt5.QtCore.pyqtSignal(dict)
+
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
         self.counter = 0
         self.camera_count_list = []
+        self.img_dict = {}
         self.parent.device.cam.record(number_of_images=4, mode='ring buffer')
         # number_of_images is buffer size in ring buffer mode, and has to be at least 4
         self.last_time = time.time()
 
     def run(self):
-        while self.counter < self.parent.device.num_img_to_take:
+        while self.counter < self.parent.device.num_img_to_take and self.parent.control.active:
             self.counter += 1
-            while True:
+            while True and self.parent.control.active:
                 if self.parent.device.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
                     print(self.parent.device.cam.rec.get_status()['dwProcImgCount'])
                     break
                 time.sleep(0.001)
 
-            image, meta = self.parent.device.cam.image(image_number=0xFFFFFFFF) # readout the last image
-            data = np.flip(image.T, 1)
-            self.parent.image_win.imgs_dict["Background"].setImage(data)
-            self.parent.image_win.x_plot.setData(np.sum(data, axis=1))
-            self.parent.image_win.y_plot.setData(np.sum(data, axis=0))
-            self.camera_count_list.append(np.sum(data))
-            self.parent.control.camera_count.setText(str(self.camera_count_list[-1]))
-            self.parent.control.camera_count_mean.setText(str(np.mean(self.camera_count_list)))
-            self.parent.control.camera_count_err_mean.setText(str(np.std(self.camera_count_list)/np.sqrt(len(self.camera_count_list))))
-            print(f"{self.counter}: "+"{:.5f}".format(time.time() - self.last_time))
+            if self.parent.control.active:
+                image, meta = self.parent.device.cam.image(image_number=0xFFFFFFFF) # readout the last image
+                image = np.flip(image.T, 1)
+                cc = np.sum(image)
+                self.camera_count_list.append(cc)
+                self.img_dict["num_image"] = self.counter
+                self.img_dict["image"] = image
+                self.img_dict["camera_count"] = np.format_float_scientific(cc, precision=4)
+                self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
+                self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(self.counter), precision=4)
+                self.signal.emit(self.img_dict)
+                # Not sure about the reason, but if I just update imges in the main thread from here, it sometimes work but sometimes not.
+                # It seems that such signal-slot way is preferred,
+                # e.g. https://stackoverflow.com/questions/54961905/real-time-plotting-using-pyqtgraph-and-threading
 
-        self.parent.app.processEvents()
+                print(f"{self.counter}: "+"{:.5f}".format(time.time()-self.last_time))
+
         self.parent.device.cam.stop()
+        self.parent.control.stop()
 
 
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
 
-        # try:
-        #     self.cam = pco.Camera(interface='USB 2.0')
-        # except Exception as err:
-        #     logging.error(traceback.format_exc())
-        #     logging.error("Can't open camera")
-        #     return
+        try:
+            self.cam = pco.Camera(interface='USB 2.0')
+        except Exception as err:
+            logging.error(traceback.format_exc())
+            logging.error("Can't open camera")
+            return
 
         self.num_img_to_take = self.parent.defaults["image_number"].getint("default")
         self.img_range = {"xmin": self.parent.defaults["image_range_xmin"].getint("default"),
@@ -121,14 +130,14 @@ class pixelfly:
         self.gaussian_fit = self.parent.defaults["gaussian_fit"].getboolean("default")
         self.img_save = self.parent.defaults["gaussian_fit"].getboolean("default")
 
-        # self.set_sensor_format(self.parent.defaults["sensor_format"]["default"])
-        # self.set_clock_rate(self.parent.defaults["clock_rate"]["default"])
-        # self.set_conv_factor(self.parent.defaults["conv_factor"]["default"])
-        # self.set_trigger_mode(self.parent.defaults["trigger_mode"]["default"])
-        # self.trigger_source = self.parent.defaults["trigger_source"]["default"]
-        # self.set_expo_time(self.parent.defaults["expo_time"].getfloat("default"))
-        # self.set_binning(self.parent.defaults["binning"].getint("horizontal_default"),
-        #                 self.parent.defaults["binning"].getint("vertical_default"))
+        self.set_sensor_format(self.parent.defaults["sensor_format"]["default"])
+        self.set_clock_rate(self.parent.defaults["clock_rate"]["default"])
+        self.set_conv_factor(self.parent.defaults["conv_factor"]["default"])
+        self.set_trigger_mode(self.parent.defaults["trigger_mode"]["default"])
+        self.trigger_source = self.parent.defaults["trigger_source"]["default"]
+        self.set_expo_time(self.parent.defaults["expo_time"].getfloat("default"))
+        self.set_binning(self.parent.defaults["binning"].getint("horizontal_default"),
+                        self.parent.defaults["binning"].getint("vertical_default"))
 
     def set_num_img(self, val):
         self.num_img_to_take = val
@@ -231,12 +240,12 @@ class Control(Scrollarea):
         img_ctrl_box.setLayout(img_ctrl_frame)
         self.frame.addWidget(img_ctrl_box)
 
-        num_img_to_take = qt.QSpinBox()
+        self.num_img_to_take = qt.QSpinBox()
         num_img_upperlimit = self.parent.defaults["image_number"].getint("max")
-        num_img_to_take.setRange(1, num_img_upperlimit)
-        num_img_to_take.setValue(self.parent.defaults["image_number"].getint("default"))
-        num_img_to_take.valueChanged[int].connect(lambda val: self.parent.device.set_num_img(val))
-        img_ctrl_frame.addRow("Num of image to take:", num_img_to_take)
+        self.num_img_to_take.setRange(1, num_img_upperlimit)
+        self.num_img_to_take.setValue(self.parent.defaults["image_number"].getint("default"))
+        self.num_img_to_take.valueChanged[int].connect(lambda val: self.parent.device.set_num_img(val))
+        img_ctrl_frame.addRow("Num of image to take:", self.num_img_to_take)
 
         format = self.parent.defaults["sensor_format"]["default"]
         format = self.parent.defaults["sensor_format"][format]
@@ -292,19 +301,19 @@ class Control(Scrollarea):
         self.num_image.setStyleSheet("background-color: gray;")
         img_ctrl_frame.addRow("Num of recorded images:", self.num_image)
 
-        self.image_width = qt.QLabel()
-        self.image_width.setText("0")
-        self.image_width.setStyleSheet("background-color: gray;")
-        self.image_height = qt.QLabel()
-        self.image_height.setText("0")
-        self.image_height.setStyleSheet("background-color: gray;")
-        image_size_box = qt.QWidget()
-        image_size_layout = qt.QHBoxLayout()
-        image_size_layout.setContentsMargins(0,0,0,0)
-        image_size_box.setLayout(image_size_layout)
-        image_size_layout.addWidget(self.image_width)
-        image_size_layout.addWidget(self.image_height)
-        img_ctrl_frame.addRow("Image width x height:", image_size_box)
+        # self.image_width = qt.QLabel()
+        # self.image_width.setText("0")
+        # self.image_width.setStyleSheet("background-color: gray;")
+        # self.image_height = qt.QLabel()
+        # self.image_height.setText("0")
+        # self.image_height.setStyleSheet("background-color: gray;")
+        # image_size_box = qt.QWidget()
+        # image_size_layout = qt.QHBoxLayout()
+        # image_size_layout.setContentsMargins(0,0,0,0)
+        # image_size_box.setLayout(image_size_layout)
+        # image_size_layout.addWidget(self.image_width)
+        # image_size_layout.addWidget(self.image_height)
+        # img_ctrl_frame.addRow("Image width x height:", image_size_box)
 
         self.gauss_fit_chb = qt.QCheckBox()
         self.gauss_fit_chb.setTristate(False)
@@ -505,33 +514,79 @@ class Control(Scrollarea):
         save_load_frame.addRow("Load settings:", self.load_settings_bt)
 
     def record(self):
+        self.active = True
+
         self.record_bt.setEnabled(False)
         self.scan_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
+        self.num_img_to_take.setEnabled(False)
+        self.x_min_sb.setEnabled(False)
+        self.x_max_sb.setEnabled(False)
+        self.y_min_sb.setEnabled(False)
+        self.y_max_sb.setEnabled(False)
+        self.gauss_fit_chb.setEnabled(False)
+        self.img_save_chb.setEnabled(False)
         self.cam_ctrl_box.setEnabled(False)
+        self.save_load_box.setEnabled(False)
+        self.num_image.setText("0")
+
         self.parent.app.processEvents()
 
         self.rec = CamThread(self.parent)
+        self.rec.signal.connect(self.img_ctrl_update)
         self.rec.start()
 
         # Another way to do this is to use QTimer() to trigger imgae image readout,
-        # but in that case, image readout is still running in the main thread,
+        # but in that case, the while loop that waits for the image is running in the main thread,
         # so it will block the main thread.
 
-
     def scan(self):
+        self.active = True
+
+        self.active = False
         self.scan_bt.setEnabled(False)
         self.record_bt.setEnabled(False)
         self.stop_bt.setEnabled(True)
+        self.num_img_to_take.setEnabled(False)
+        self.x_min_sb.setEnabled(False)
+        self.x_max_sb.setEnabled(False)
+        self.y_min_sb.setEnabled(False)
+        self.y_max_sb.setEnabled(False)
+        self.gauss_fit_chb.setEnabled(False)
+        self.img_save_chb.setEnabled(False)
         self.cam_ctrl_box.setEnabled(False)
+        self.save_load_box.setEnabled(False)
+
+        self.parent.app.processEvents()
+
 
     def stop(self):
-        self.running = False
+        self.active = False
 
         self.stop_bt.setEnabled(False)
         self.record_bt.setEnabled(True)
         self.scan_bt.setEnabled(True)
+        self.num_img_to_take.setEnabled(True)
+        self.x_min_sb.setEnabled(True)
+        self.x_max_sb.setEnabled(True)
+        self.y_min_sb.setEnabled(True)
+        self.y_max_sb.setEnabled(True)
+        self.gauss_fit_chb.setEnabled(True)
+        self.img_save_chb.setEnabled(True)
         self.cam_ctrl_box.setEnabled(True)
+        self.save_load_box.setEnabled(True)
+
+    @PyQt5.QtCore.pyqtSlot(dict)
+    def img_ctrl_update(self, img_dict):
+        img = img_dict["image"]
+        self.parent.image_win.imgs_dict["Background"].setImage(img)
+        self.parent.image_win.x_plot.setData(np.sum(img, axis=1))
+        self.parent.image_win.y_plot.setData(np.sum(img, axis=0))
+
+        self.num_image.setText(str(img_dict["num_image"]))
+        self.camera_count.setText(str(img_dict["camera_count"]))
+        self.camera_count_mean.setText(str(img_dict["camera_count_ave"]))
+        self.camera_count_err_mean.setText(str(img_dict["camera_count_err"]))
 
     def set_img_range(self, text, val, sb):
         if text == "xmin":
