@@ -13,7 +13,7 @@ import PyQt5
 import pyqtgraph as pg
 import PyQt5.QtGui as QtGui
 import PyQt5.QtWidgets as qt
-from collections import deque
+import os
 import pco
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 
@@ -176,44 +176,55 @@ class pixelfly:
 
     def set_num_img(self, val):
         self.num_img_to_take = val
+        print(f"number of images to take = {val}")
 
     def set_img_range(self, text, val):
         self.img_range[text] = val
+        print(f"image range {text} = {val}")
 
     def set_gauss_fit(self, state):
         self.gaussian_fit = state
+        print(f"2D Gaussian fit = {state}")
 
     def set_img_save(self, state):
         self.img_save = state
+        print(f"image auto save = {state}")
 
     def set_sensor_format(self, arg):
         format = self.parent.defaults["sensor_format"][arg]
         self.cam.sdk.set_sensor_format(format)
         self.cam.sdk.arm_camera()
+        print(f"sensor format = {arg}")
 
     def set_clock_rate(self, arg):
         rate = self.parent.defaults["clock_rate"].getint(arg)
         self.cam.configuration = {"pixel rate": rate}
+        print(f"clock rate = {arg}")
 
     def set_conv_factor(self, arg):
         conv = self.parent.defaults["conv_factor"].getint(arg)
         self.cam.sdk.set_conversion_factor(conv)
         self.cam.sdk.arm_camera()
+        print(f"conversion factor = {arg}")
 
     def set_trigger_mode(self, arg):
         self.trig_mode = arg
         mode = self.parent.defaults["trigger_mode"][arg]
         self.cam.configuration = {"trigger": mode}
+        print(f"trigger mode = {arg}")
 
     def set_trigger_source(self, text, checked):
         if checked:
             self.trigger_source = text
+            print(f"trigger source = {arg}")
 
     def set_expo_time(self, expo_time):
         self.cam.configuration = {'exposure time': expo_time}
+        print(f"exposure time (in seconds) = {expo_time}")
 
     def set_binning(self, bin_h, bin_v):
         self.cam.configuration = {'binning': (int(bin_h), int(bin_v))}
+        print(f"binning = {bin_h}(horizontal). {bin_v}(vertical)")
 
     def load_configs(self):
         pass
@@ -357,7 +368,7 @@ class Control(Scrollarea):
         self.gauss_fit_chb = qt.QCheckBox()
         self.gauss_fit_chb.setTristate(False)
         gaus = self.parent.defaults["gaussian_fit"].getboolean("default")
-        self.gauss_fit_chb.setCheckState(2 if gaus else 0)
+        self.gauss_fit_chb.setChecked(gaus)
         self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.parent.device.set_gauss_fit(state))
         img_ctrl_frame.addRow("2D gaussian fit:", self.gauss_fit_chb)
@@ -365,7 +376,7 @@ class Control(Scrollarea):
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
         save = self.parent.defaults["image_save"].getboolean("default")
-        self.img_save_chb.setCheckState(2 if save else 0)
+        self.img_save_chb.setChecked(save)
         self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.img_save_chb.stateChanged[int].connect(lambda state: self.parent.device.set_img_save(state))
         img_ctrl_frame.addRow("Image auto save:", self.img_save_chb)
@@ -541,7 +552,7 @@ class Control(Scrollarea):
         self.date_time_chb = qt.QCheckBox()
         self.date_time_chb.setTristate(False)
         date = self.parent.defaults["append_time"].getboolean("default")
-        self.date_time_chb.setCheckState(2 if date else 0)
+        self.date_time_chb.setChecked(date)
         self.date_time_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         save_load_frame.addRow("Auto append time:", self.date_time_chb)
 
@@ -688,11 +699,87 @@ class Control(Scrollarea):
         self.parent.device.set_binning(bin_h, bin_v)
 
     def save_settings(self):
-        pass
+        file_name = ""
+        if self.file_name_le.text():
+            file_name += self.file_name_le.text()
+        if self.date_time_chb.isChecked():
+            if file_name != "":
+                file_name += "_"
+            file_name += time.strftime("%Y%m%d_%H%M%S")
+        file_name += ".ini"
+        file_name = r"saved_settings"+"\\"+file_name
+        if os.path.exists(file_name):
+            overwrite = qt.QMessageBox.warning(self, 'File name exists',
+                                            'File name already exists. Continue to overwrite it?',
+                                            qt.QMessageBox.Yes | qt.QMessageBox.No,
+                                            qt.QMessageBox.No)
+            if overwrite == qt.QMessageBox.No:
+                return
+
+        config = configparser.ConfigParser()
+
+        config["image_control"] = {}
+        config["image_control"]["num_image"] = str(self.num_img_to_take.value())
+        config["image_control"]["xmin"] = str(self.x_min_sb.value())
+        config["image_control"]["xmax"] = str(self.x_max_sb.value())
+        config["image_control"]["ymin"] = str(self.y_min_sb.value())
+        config["image_control"]["ymax"] = str(self.y_max_sb.value())
+        config["image_control"]["2D_gaussian_fit"] = str(self.gauss_fit_chb.isChecked())
+        config["image_control"]["image_auto_save"] = str(self.img_save_chb.isChecked())
+
+        config["camera_control"] = {}
+        config["camera_control"]["sensor_format"] = self.sensor_format_cb.currentText()
+        config["camera_control"]["clock_rate"] = self.clock_rate_cb.currentText()
+        config["camera_control"]["conversion_factor"] = self.conv_factor_cb.currentText()
+        config["camera_control"]["trigger_mode"] = self.trigger_mode_cb.currentText()
+        for i in self.trig_source_rblist:
+            if i.isChecked():
+                t = i.text()
+                break
+        config["camera_control"]["trigger_source"] = t
+        config["camera_control"]["exposure_time"] = self.expo_le.text()
+        config["camera_control"]["exposure_unit"] = self.expo_unit_cb.currentText()
+        config["camera_control"]["binning_horizontal"] = self.bin_hori_cb.currentText()
+        config["camera_control"]["binning_vertical"] = self.bin_vert_cb.currentText()
+
+        configfile = open(file_name, "w")
+        config.write(configfile)
+        configfile.close()
 
     def load_settings(self):
-        pass
+        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "","All Files (*);;INI File (*.ini)")
+        if not file_name:
+            return
 
+        config = configparser.ConfigParser()
+        config.read(file_name)
+
+        self.num_img_to_take.setValue(config["image_control"].getint("num_image"))
+        # spinbox is triggered, so its connected function will be called
+        self.x_min_sb.setValue(config["image_control"].getint("xmin"))
+        self.x_max_sb.setValue(config["image_control"].getint("xmax"))
+        self.y_min_sb.setValue(config["image_control"].getint("ymin"))
+        self.y_max_sb.setValue(config["image_control"].getint("ymax"))
+        self.y_max_sb.setValue(config["image_control"].getint("ymax"))
+        self.gauss_fit_chb.setChecked(config["image_control"].getboolean("2d_gaussian_fit"))
+        # self.parent.deive ?
+        self.img_save_chb.setChecked(config["image_control"].getboolean("image_auto_save"))
+
+        self.sensor_format_cb.setCurrentText(config["camera_control"]["sensor_format"])
+        # make sure sensor format is updated after image range settings
+        self.clock_rate_cb.setCurrentText(config["camera_control"]["clock_rate"])
+        self.conv_factor_cb.setCurrentText(config["camera_control"]["conversion_factor"])
+        for i in self.trig_source_rblist:
+            if i.text() == config["camera_control"]["trigger_source"]:
+                i.setChecked(True)
+                break
+        self.trigger_mode_cb.setCurrentText(config["camera_control"]["trigger_mode"])
+        # make sure trigger mode is updated after trigger source, because for some trigger modes, trigger source box will be disabled
+        self.expo_le.setText(config["camera_control"]["exposure_time"])
+        self.expo_unit_cb.setCurrentText(config["camera_control"]["exposure_unit"])
+        self.bin_hori_cb.setCurrentText(config["camera_control"].get("binning_horizontal"))
+        self.bin_vert_cb.setCurrentText(config["camera_control"].get("binning_vertical"))
+        # make sure binning is updated after image range settings
 
 class ImageWin(Scrollarea):
     def __init__(self, parent):
