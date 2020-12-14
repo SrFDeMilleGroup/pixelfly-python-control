@@ -176,58 +176,55 @@ class pixelfly:
 
     def set_num_img(self, val):
         self.num_img_to_take = val
-        print(f"number of images to take = {val}")
+        # print(f"number of images to take = {val}")
 
     def set_img_range(self, text, val):
         self.img_range[text] = val
-        print(f"image range {text} = {val}")
+        # print(f"image range {text} = {val}")
 
     def set_gauss_fit(self, state):
         self.gaussian_fit = state
-        print(f"2D Gaussian fit = {state}")
+        # print(f"2D Gaussian fit = {state}")
 
     def set_img_save(self, state):
         self.img_save = state
-        print(f"image auto save = {state}")
+        # print(f"image auto save = {state}")
 
     def set_sensor_format(self, arg):
         format = self.parent.defaults["sensor_format"][arg]
         self.cam.sdk.set_sensor_format(format)
         self.cam.sdk.arm_camera()
-        print(f"sensor format = {arg}")
+        # print(f"sensor format = {arg}")
 
     def set_clock_rate(self, arg):
         rate = self.parent.defaults["clock_rate"].getint(arg)
         self.cam.configuration = {"pixel rate": rate}
-        print(f"clock rate = {arg}")
+        # print(f"clock rate = {arg}")
 
     def set_conv_factor(self, arg):
         conv = self.parent.defaults["conv_factor"].getint(arg)
         self.cam.sdk.set_conversion_factor(conv)
         self.cam.sdk.arm_camera()
-        print(f"conversion factor = {arg}")
+        # print(f"conversion factor = {arg}")
 
     def set_trigger_mode(self, arg):
         self.trig_mode = arg
         mode = self.parent.defaults["trigger_mode"][arg]
         self.cam.configuration = {"trigger": mode}
-        print(f"trigger mode = {arg}")
+        # print(f"trigger mode = {arg}")
 
     def set_trigger_source(self, text, checked):
         if checked:
             self.trigger_source = text
-            print(f"trigger source = {arg}")
+            # print(f"trigger source = {arg}")
 
     def set_expo_time(self, expo_time):
         self.cam.configuration = {'exposure time': expo_time}
-        print(f"exposure time (in seconds) = {expo_time}")
+        # print(f"exposure time (in seconds) = {expo_time}")
 
     def set_binning(self, bin_h, bin_v):
         self.cam.configuration = {'binning': (int(bin_h), int(bin_v))}
-        print(f"binning = {bin_h}(horizontal). {bin_v}(vertical)")
-
-    def load_configs(self):
-        pass
+        # print(f"binning = {bin_h} (horizontal), {bin_v} (vertical)")
 
 
 class Control(Scrollarea):
@@ -436,7 +433,7 @@ class Control(Scrollarea):
             self.sensor_format_cb.addItem(i)
         default = self.parent.defaults["sensor_format"]["default"]
         self.sensor_format_cb.setCurrentText(default)
-        self.sensor_format_cb.activated[str].connect(lambda val: self.set_sensor_format(val))
+        self.sensor_format_cb.currentTextChanged[str].connect(lambda val: self.set_sensor_format(val))
         cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
         self.clock_rate_cb = qt.QComboBox()
@@ -447,7 +444,7 @@ class Control(Scrollarea):
             self.clock_rate_cb.addItem(i)
         default = self.parent.defaults["clock_rate"]["default"]
         self.clock_rate_cb.setCurrentText(default)
-        self.clock_rate_cb.activated[str].connect(lambda val: self.parent.device.set_clock_rate(val))
+        self.clock_rate_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_clock_rate(val))
         cam_ctrl_frame.addRow("Clock rate:", self.clock_rate_cb)
 
         self.conv_factor_cb = qt.QComboBox()
@@ -459,7 +456,7 @@ class Control(Scrollarea):
             self.conv_factor_cb.addItem(i)
         default = self.parent.defaults["conv_factor"]["default"]
         self.conv_factor_cb.setCurrentText(default)
-        self.conv_factor_cb.activated[str].connect(lambda val: self.parent.device.set_conv_factor(val))
+        self.conv_factor_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_conv_factor(val))
         cam_ctrl_frame.addRow("Conversion factor:", self.conv_factor_cb)
 
         self.trigger_mode_cb = qt.QComboBox()
@@ -470,7 +467,7 @@ class Control(Scrollarea):
             self.trigger_mode_cb.addItem(i)
         default = self.parent.defaults["trigger_mode"]["default"]
         self.trigger_mode_cb.setCurrentText(default)
-        self.trigger_mode_cb.activated[str].connect(lambda val: self.set_trigger_mode(val))
+        self.trigger_mode_cb.currentTextChanged[str].connect(lambda val: self.set_trigger_mode(val))
         cam_ctrl_frame.addRow("Trigger mode:", self.trigger_mode_cb)
 
         self.trig_source_rblist = []
@@ -506,7 +503,7 @@ class Control(Scrollarea):
         self.expo_unit_cb.setCurrentText(default_unit)
         self.expo_le.editingFinished.connect(lambda le=self.expo_le, cb=self.expo_unit_cb:
                                             self.set_expo_time(le.text(), cb.currentText()))
-        self.expo_unit_cb.activated[str].connect(lambda val, le=self.expo_le: self.set_expo_time(le.text(), val))
+        self.expo_unit_cb.currentTextChanged[str].connect(lambda val, le=self.expo_le: self.set_expo_time(le.text(), val))
         expo_box = qt.QWidget()
         expo_box.setMaximumWidth(200)
         expo_layout = qt.QHBoxLayout()
@@ -526,8 +523,8 @@ class Control(Scrollarea):
         self.bin_hori_cb.setCurrentText(bin_h)
         bin_v = self.parent.defaults["binning"]["vertical_default"]
         self.bin_vert_cb.setCurrentText(bin_v)
-        self.bin_hori_cb.activated[str].connect(lambda val, text="hori", cb=self.bin_vert_cb: self.set_binning(text, val, cb.currentText()))
-        self.bin_vert_cb.activated[str].connect(lambda val, text="vert", cb=self.bin_hori_cb: self.set_binning(text, cb.currentText(), val))
+        self.bin_hori_cb.currentTextChanged[str].connect(lambda val, text="hori", cb=self.bin_vert_cb: self.set_binning(text, val, cb.currentText()))
+        self.bin_vert_cb.currentTextChanged[str].connect(lambda val, text="vert", cb=self.bin_hori_cb: self.set_binning(text, cb.currentText(), val))
         bin_box = qt.QWidget()
         bin_box.setMaximumWidth(200)
         bin_layout = qt.QHBoxLayout()
@@ -707,7 +704,7 @@ class Control(Scrollarea):
                 file_name += "_"
             file_name += time.strftime("%Y%m%d_%H%M%S")
         file_name += ".ini"
-        file_name = r"saved_settings"+"\\"+file_name
+        file_name = r"saved_settings/"+file_name
         if os.path.exists(file_name):
             overwrite = qt.QMessageBox.warning(self, 'File name exists',
                                             'File name already exists. Continue to overwrite it?',
@@ -747,7 +744,7 @@ class Control(Scrollarea):
         configfile.close()
 
     def load_settings(self):
-        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "","All Files (*);;INI File (*.ini)")
+        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
         if not file_name:
             return
 
@@ -755,17 +752,18 @@ class Control(Scrollarea):
         config.read(file_name)
 
         self.num_img_to_take.setValue(config["image_control"].getint("num_image"))
-        # spinbox is triggered, so its connected function will be called
+        # the spinbox emits 'valueChanged' signal, and its connected function will be called
         self.x_min_sb.setValue(config["image_control"].getint("xmin"))
         self.x_max_sb.setValue(config["image_control"].getint("xmax"))
         self.y_min_sb.setValue(config["image_control"].getint("ymin"))
         self.y_max_sb.setValue(config["image_control"].getint("ymax"))
         self.y_max_sb.setValue(config["image_control"].getint("ymax"))
         self.gauss_fit_chb.setChecked(config["image_control"].getboolean("2d_gaussian_fit"))
-        # self.parent.deive ?
+        # the combobox emits 'stateChanged' signal, and its connected function will be called
         self.img_save_chb.setChecked(config["image_control"].getboolean("image_auto_save"))
 
         self.sensor_format_cb.setCurrentText(config["camera_control"]["sensor_format"])
+        # the combobox emits 'currentTextChanged' signal, and its connected function will be called
         # make sure sensor format is updated after image range settings
         self.clock_rate_cb.setCurrentText(config["camera_control"]["clock_rate"])
         self.conv_factor_cb.setCurrentText(config["camera_control"]["conversion_factor"])
@@ -776,7 +774,9 @@ class Control(Scrollarea):
         self.trigger_mode_cb.setCurrentText(config["camera_control"]["trigger_mode"])
         # make sure trigger mode is updated after trigger source, because for some trigger modes, trigger source box will be disabled
         self.expo_le.setText(config["camera_control"]["exposure_time"])
+        # QLineEdit won't emit 'editingfinishede signal
         self.expo_unit_cb.setCurrentText(config["camera_control"]["exposure_unit"])
+        # make sure exposure unit is updated after exposure time QLineEdit, so the pixelfly.set_expo_time functioni will be called
         self.bin_hori_cb.setCurrentText(config["camera_control"].get("binning_horizontal"))
         self.bin_vert_cb.setCurrentText(config["camera_control"].get("binning_vertical"))
         # make sure binning is updated after image range settings
