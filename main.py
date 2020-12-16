@@ -20,7 +20,7 @@ import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 
 
 # steal colormap data from matplotlib
-def steal_colormap(colorname="viridis", lut=12):
+def steal_colormap(colorname="viridis", lut=6):
     color = cm.get_cmap(colorname, lut)
     colordata = color(range(lut)) # (r, g, b, a=opacity)
     colordata_reform = []
@@ -34,8 +34,8 @@ def fake_data(x_range=20, y_range=30, x_center=12, y_center=17, x_err=3, y_err=2
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
     gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))/10*amp
-    gauss = np.repeat(gauss, 40, axis=0)
-    gauss = np.repeat(gauss, 20, axis=1)
+    gauss = np.repeat(gauss, 70, axis=0)
+    gauss = np.repeat(gauss, 35, axis=1)
     gauss = gauss.astype("uint16")
 
     return gauss
@@ -135,27 +135,19 @@ class CamThread(PyQt5.QtCore.QThread):
             type = self.image_type[self.counter%2] # odd-numbered image is background, even-numbered image is signal
             self.counter += 1
 
-            if self.parent.device.trig_mode == "auto sequence":
-                pass
-            elif self.parent.device.trig_mode == "software trigger":
+            if self.parent.device.trigger_mode == "software":
                 self.parent.device.cam.sdk.force_trigger() # softwarely trigger pixelfly camera
-            elif self.parent.device.trig_mode =="external/software trigger":
-                if self.parent.device.trigger_source == "software":
-                    self.parent.device.cam.sdk.force_trigger()
-            else:
-                print("Trigger mode not supported.")
-                return
+                time.sleep(0.5)
 
-            while True and self.parent.control.active:
+            while self.parent.control.active:
                 if self.parent.device.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
-                    print(self.parent.device.cam.rec.get_status()['dwProcImgCount'])
                     break
                 time.sleep(0.001)
 
             if self.parent.control.active:
                 image, meta = self.parent.device.cam.image(image_number=0xFFFFFFFF) # readout the lastest image
                 # image is in "unit16" data type
-                image = np.flip(image.T, 1)
+                image = np.flip(image.T, 1).astype("float")
 
                 if type == "background":
                     image = np.zeros(image.shape)
@@ -166,9 +158,9 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.signal.emit(self.img_dict)
 
                 elif type == "signal":
-                    image_bgsub = image.astype("float") - self.image_bg.astype("float") # "uint16" can't represent negative number
+                    image_bgsub = image - self.image_bg # "uint16" can't represent negative number
                     image_bgsub_chop = image_bgsub[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
-                                                            self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
+                                                    self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
                     cc = np.sum(image_bgsub_chop)
                     self.camera_count_list.append(cc)
                     num = len(self.camera_count_list)
@@ -192,7 +184,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 # It seems that such signal-slot way is preferred,
                 # e.g. https://stackoverflow.com/questions/54961905/real-time-plotting-using-pyqtgraph-and-threading
 
-                print(f"{self.counter}: "+"{:.5f}".format(time.time()-self.last_time))
+                print(f"image {self.counter}: "+"{:.5f} s".format(time.time()-self.last_time))
 
         self.parent.device.cam.stop()
 
@@ -211,8 +203,7 @@ class pixelfly:
         self.set_sensor_format(self.parent.defaults["sensor_format"]["default"])
         self.set_clock_rate(self.parent.defaults["clock_rate"]["default"])
         self.set_conv_factor(self.parent.defaults["conv_factor"]["default"])
-        self.set_trigger_mode(self.parent.defaults["trigger_mode"]["default"])
-        self.trigger_source = self.parent.defaults["trigger_source"]["default"]
+        self.set_trigger_mode(self.parent.defaults["trigger_mode"]["default"], True)
         self.set_expo_time(self.parent.defaults["expo_time"].getfloat("default"))
         self.set_binning(self.parent.defaults["binning"].getint("horizontal_default"),
                         self.parent.defaults["binning"].getint("vertical_default"))
@@ -236,15 +227,11 @@ class pixelfly:
         self.cam.sdk.arm_camera()
         # print(f"conversion factor = {arg}")
 
-    def set_trigger_mode(self, arg):
-        self.trig_mode = arg
-        mode = self.parent.defaults["trigger_mode"][arg]
-        self.cam.configuration = {"trigger": mode}
-        # print(f"trigger mode = {arg}")
-
-    def set_trigger_source(self, text, checked):
+    def set_trigger_mode(self, text, checked):
         if checked:
-            self.trigger_source = text
+            self.trigger_mode = text
+            mode_cam = self.parent.defaults["trigger_mode"][text]
+            self.cam.configuration = {"trigger": mode_cam}
             # print(f"trigger source = {arg}")
 
     def set_expo_time(self, expo_time):
@@ -252,15 +239,14 @@ class pixelfly:
         # print(f"exposure time (in seconds) = {expo_time}")
 
     def set_binning(self, bin_h, bin_v):
-        self.bin_h = int(bin_h)
-        self.bin_v = int(bin_v)
-        self.cam.configuration = {'binning': (int(bin_h), int(bin_v))}
+        self.binning = {"horizontal": int(bin_h), "vertical": int(bin_v)}
+        self.cam.configuration = {'binning': (self.binning["horizontal"], self.binning["vertical"])}
         # print(f"binning = {bin_h} (horizontal), {bin_v} (vertical)")
 
     def set_image_shape(self):
         format_str = self.sensor_format + " absolute_"
-        self.image_shape = {"xmax": int(self.parent.defaults["sensor_format"].getint(format_str+"xmax")/self.bin_h),
-                            "ymax": int(self.parent.defaults["sensor_format"].getint(format_str+"ymax")/self.bin_v)}
+        self.image_shape = {"xmax": int(self.parent.defaults["sensor_format"].getint(format_str+"xmax")/self.binning["horizontal"]),
+                            "ymax": int(self.parent.defaults["sensor_format"].getint(format_str+"ymax")/self.binning["vertical"])}
 
 
 class Control(Scrollarea):
@@ -268,8 +254,8 @@ class Control(Scrollarea):
         super().__init__(parent, label="", type="vbox")
         self.setMaximumWidth(400)
         self.frame.setContentsMargins(0,0,0,0)
-        self.cpu_limit = 60000 # biggest matrix we can do gaussian fit to
-        self.hdf_filename = "saved_images\images.hdf"
+        self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit") # biggest matrix we can do gaussian fit to
+        self.hdf_filename = self.parent.defaults["image_save"]["file_name"]
 
         self.num_img_to_take = self.parent.defaults["image_number"].getint("default")
         self.roi = {"xmin": self.parent.defaults["roi"].getint("xmin"),
@@ -336,18 +322,9 @@ class Control(Scrollarea):
         self.num_img_to_take_sb = qt.QSpinBox()
         num_img_upperlimit = self.parent.defaults["image_number"].getint("max")
         self.num_img_to_take_sb.setRange(1, num_img_upperlimit)
-        self.num_img_to_take_sb.setValue(self.parent.defaults["image_number"].getint("default"))
+        self.num_img_to_take_sb.setValue(self.num_img_to_take)
         self.num_img_to_take_sb.valueChanged[int].connect(lambda val: self.set_num_img(val))
         img_ctrl_frame.addRow("Num of image to take:", self.num_img_to_take_sb)
-
-        self.gauss_fit_chb = qt.QCheckBox()
-        self.gauss_fit_chb.setTristate(False)
-        gaus = self.parent.defaults["gaussian_fit"].getboolean("default")
-        self.gauss_fit_chb.setChecked(gaus)
-        self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
-        self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.set_gauss_fit(state))
-        self.gauss_fit_chb.setEnabled(self.parent.defaults["gaussian_fit"].getboolean("enable"))
-        self.gauss_fit_chb.setToolTip(f"Can only be enabled when image size less than {self.cpu_limit} pixels.")
 
         self.x_min_sb = qt.QSpinBox()
         self.x_min_sb.setRange(0, self.roi["xmax"]-1)
@@ -378,9 +355,6 @@ class Control(Scrollarea):
                                                 self.set_roi(text, val, sb))
         self.y_max_sb.valueChanged[int].connect(lambda val, text='ymax', sb=self.y_min_sb:
                                                 self.set_roi(text, val, sb))
-        roi_max = self.parent.defaults["roi"].getint("ymax")
-
-
 
         y_range_box = qt.QWidget()
         y_range_layout = qt.QHBoxLayout()
@@ -408,12 +382,23 @@ class Control(Scrollarea):
         # image_shape_layout.addWidget(self.image_width)
         # image_shape_layout.addWidget(self.image_height)
         # img_ctrl_frame.addRow("Image width x height:", image_shape_box)
+
+        self.gauss_fit_chb = qt.QCheckBox()
+        self.gauss_fit_chb.setTristate(False)
+        self.gauss_fit_chb.setChecked(self.gaussian_fit)
+        self.gauss_fit_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
+        self.gauss_fit_chb.stateChanged[int].connect(lambda state: self.set_gauss_fit(state))
+        self.gauss_fit_chb.setToolTip(f"Can only be enabled when image size less than {self.cpu_limit} pixels.")
         img_ctrl_frame.addRow("2D gaussian fit:", self.gauss_fit_chb)
+
+        if (self.roi["xmax"]-self.roi["xmin"])*(self.roi["ymax"]-self.roi["ymin"]) > self.cpu_limit:
+            # this line has to be after gauss_fit_chb's connect()
+            self.gauss_fit_chb.setChecked(False)
+            self.gauss_fit_chb.setEnabled(False)
 
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
-        save = self.parent.defaults["image_save"].getboolean("default")
-        self.img_save_chb.setChecked(save)
+        self.img_save_chb.setChecked(self.img_save)
         self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.img_save_chb.stateChanged[int].connect(lambda state: self.set_img_save(state))
         img_ctrl_frame.addRow("Image auto save:", self.img_save_chb)
@@ -479,8 +464,7 @@ class Control(Scrollarea):
         op = [x.strip() for x in self.parent.defaults["sensor_format"]["options"].split(',')]
         for i in op:
             self.sensor_format_cb.addItem(i)
-        default = self.parent.defaults["sensor_format"]["default"]
-        self.sensor_format_cb.setCurrentText(default)
+        self.sensor_format_cb.setCurrentText(self.parent.device.sensor_format)
         self.sensor_format_cb.currentTextChanged[str].connect(lambda val: self.set_sensor_format(val))
         cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
@@ -507,35 +491,22 @@ class Control(Scrollarea):
         self.conv_factor_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_conv_factor(val))
         cam_ctrl_frame.addRow("Conversion factor:", self.conv_factor_cb)
 
-        self.trigger_mode_cb = qt.QComboBox()
-        self.trigger_mode_cb.setMaximumWidth(200)
-        self.trigger_mode_cb.setMaximumHeight(20)
-        op = [x.strip() for x in self.parent.defaults["trigger_mode"]["options"].split(',')]
-        for i in op:
-            self.trigger_mode_cb.addItem(i)
-        default = self.parent.defaults["trigger_mode"]["default"]
-        self.trigger_mode_cb.setCurrentText(default)
-        self.trigger_mode_cb.currentTextChanged[str].connect(lambda val: self.set_trigger_mode(val))
-        cam_ctrl_frame.addRow("Trigger mode:", self.trigger_mode_cb)
-
-        self.trig_source_rblist = []
+        self.trig_mode_rblist = []
         trig_bg = qt.QButtonGroup(self.parent)
         self.trig_box = qt.QWidget()
         self.trig_box.setMaximumWidth(200)
         trig_layout = qt.QHBoxLayout()
         trig_layout.setContentsMargins(0,0,0,0)
         self.trig_box.setLayout(trig_layout)
-        op = [x.strip() for x in self.parent.defaults["trigger_source"]["options"].split(',')]
-        default = self.parent.defaults["trigger_source"]["default"]
+        op = [x.strip() for x in self.parent.defaults["trigger_mode"]["options"].split(',')]
         for i in op:
-            trig_source_rb = qt.QRadioButton(i)
-            trig_source_rb.setChecked(True if default == i else False)
-            trig_source_rb.toggled[bool].connect(lambda val, rb=trig_source_rb: self.parent.device.set_trigger_source(rb.text(), val))
-            self.trig_source_rblist.append(trig_source_rb)
-            trig_bg.addButton(trig_source_rb)
-            trig_layout.addWidget(trig_source_rb)
-        cam_ctrl_frame.addRow("Trigger source:", self.trig_box)
-        self.trig_box.setEnabled(self.parent.defaults["trigger_source"].getboolean("enable"))
+            trig_mode_rb = qt.QRadioButton(i)
+            trig_mode_rb.setChecked(True if i == self.parent.device.trigger_mode else False)
+            trig_mode_rb.toggled[bool].connect(lambda val, rb=trig_mode_rb: self.parent.device.set_trigger_mode(rb.text(), val))
+            self.trig_mode_rblist.append(trig_mode_rb)
+            trig_bg.addButton(trig_mode_rb)
+            trig_layout.addWidget(trig_mode_rb)
+        cam_ctrl_frame.addRow("Trigger mode:", self.trig_box)
 
         self.expo_le = qt.QLineEdit() # try qt.QDoubleSpinBox() ?
         default = self.parent.defaults["expo_time"].getfloat("default")
@@ -567,10 +538,8 @@ class Control(Scrollarea):
         for i in op:
             self.bin_hori_cb.addItem(i)
             self.bin_vert_cb.addItem(i)
-        bin_h = self.parent.defaults["binning"]["horizontal_default"]
-        self.bin_hori_cb.setCurrentText(bin_h)
-        bin_v = self.parent.defaults["binning"]["vertical_default"]
-        self.bin_vert_cb.setCurrentText(bin_v)
+        self.bin_hori_cb.setCurrentText(str(self.parent.device.binning["horizontal"]))
+        self.bin_vert_cb.setCurrentText(str(self.parent.device.binning["vertical"]))
         self.bin_hori_cb.currentTextChanged[str].connect(lambda val, text="hori", cb=self.bin_vert_cb: self.set_binning(text, val, cb.currentText()))
         self.bin_vert_cb.currentTextChanged[str].connect(lambda val, text="vert", cb=self.bin_hori_cb: self.set_binning(text, cb.currentText(), val))
         bin_box = qt.QWidget()
@@ -590,13 +559,13 @@ class Control(Scrollarea):
         self.frame.addWidget(self.save_load_box)
 
         self.file_name_le = qt.QLineEdit()
-        default_file_name = self.parent.defaults["file_name_save"]["default"]
+        default_file_name = self.parent.defaults["setting_save"]["file_name"]
         self.file_name_le.setText(default_file_name)
         save_load_frame.addRow("File name to save:", self.file_name_le)
 
         self.date_time_chb = qt.QCheckBox()
         self.date_time_chb.setTristate(False)
-        date = self.parent.defaults["append_time"].getboolean("default")
+        date = self.parent.defaults["setting_save"].getboolean("append_time")
         self.date_time_chb.setChecked(date)
         self.date_time_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         save_load_frame.addRow("Auto append time:", self.date_time_chb)
@@ -617,9 +586,10 @@ class Control(Scrollarea):
         self.enable_widgets(False)
         self.num_image.setText("0")
 
-        with h5py.File(self.hdf_filename, "a") as hdf_file:
-            self.hdf_group_name = "run_"+time.strftime("%Y%m%d_%H%M%S")
-            hdf_file.create_group(self.hdf_group_name)
+        if self.img_save:
+            with h5py.File(self.hdf_filename, "a") as hdf_file:
+                self.hdf_group_name = "run_"+time.strftime("%Y%m%d_%H%M%S")
+                hdf_file.create_group(self.hdf_group_name)
 
         self.rec = CamThread(self.parent)
         self.rec.signal.connect(self.img_ctrl_update)
@@ -694,7 +664,8 @@ class Control(Scrollarea):
         self.cam_ctrl_box.setEnabled(arg)
         self.save_load_box.setEnabled(arg)
 
-        self.parent.image_win.img_roi.setEnabled(arg)
+        for key, roi in self.parent.image_win.img_roi_dict.items():
+            roi.setEnabled(arg)
         self.parent.image_win.x_plot_lr.setMovable(arg)
         self.parent.image_win.y_plot_lr.setMovable(arg)
 
@@ -717,8 +688,9 @@ class Control(Scrollarea):
 
         x_range = self.roi["xmax"]-self.roi["xmin"]
         y_range = self.roi["ymax"]-self.roi["ymin"]
-        self.parent.image_win.img_roi.setPos(pos=(self.roi["xmin"], self.roi["ymin"]))
-        self.parent.image_win.img_roi.setSize(size=(x_range, y_range))
+        for key, roi in self.parent.image_win.img_roi_dict.items():
+            roi.setPos(pos=(self.roi["xmin"], self.roi["ymin"]))
+            roi.setSize(size=(x_range, y_range))
 
         self.parent.image_win.x_plot_lr.setRegion((self.roi["xmin"], self.roi["xmax"]))
         self.parent.image_win.y_plot_lr.setRegion((self.roi["ymin"], self.roi["ymax"]))
@@ -739,26 +711,19 @@ class Control(Scrollarea):
 
     def set_sensor_format(self, val):
         format_str = val + " absolute_"
-        x_max = (self.parent.defaults["sensor_format"].getint(format_str+"xmax"))/self.parent.device.bin_h
+        x_max = (self.parent.defaults["sensor_format"].getint(format_str+"xmax"))/self.parent.device.binning["horizontal"]
         self.x_max_sb.setMaximum(int(x_max))
-        y_max = (self.parent.defaults["sensor_format"].getint(format_str+"ymax"))/self.parent.device.bin_v
+        y_max = (self.parent.defaults["sensor_format"].getint(format_str+"ymax"))/self.parent.device.binning["vertical"]
         self.y_max_sb.setMaximum(int(y_max))
         # number in both 'min' and 'max' spinboxes will adjusted automatically
 
         self.parent.device.set_sensor_format(val)
         self.parent.device.set_image_shape()
 
-        self.parent.image_win.img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
+        for key, roi in self.parent.image_win.img_roi_dict.items():
+            roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
         self.parent.image_win.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
-
-    def set_trigger_mode(self, val):
-        if val == "external/software trigger":
-            self.trig_box.setEnabled(True)
-        else:
-            self.trig_box.setEnabled(False)
-
-        self.parent.device.set_trigger_mode(val)
 
     def set_expo_time(self, time, unit):
         unit_num = self.parent.defaults["expo_unit"].getfloat(unit)
@@ -802,7 +767,8 @@ class Control(Scrollarea):
         self.parent.device.set_binning(bin_h, bin_v)
         self.parent.device.set_image_shape()
 
-        self.parent.image_win.img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
+        for key, roi in self.parent.image_win.img_roi_dict.items():
+            roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
         self.parent.image_win.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
 
@@ -839,12 +805,11 @@ class Control(Scrollarea):
         config["camera_control"]["sensor_format"] = self.sensor_format_cb.currentText()
         config["camera_control"]["clock_rate"] = self.clock_rate_cb.currentText()
         config["camera_control"]["conversion_factor"] = self.conv_factor_cb.currentText()
-        config["camera_control"]["trigger_mode"] = self.trigger_mode_cb.currentText()
-        for i in self.trig_source_rblist:
+        for i in self.trig_mode_rblist:
             if i.isChecked():
                 t = i.text()
                 break
-        config["camera_control"]["trigger_source"] = t
+        config["camera_control"]["trigger_mode"] = t
         config["camera_control"]["exposure_time"] = self.expo_le.text()
         config["camera_control"]["exposure_unit"] = self.expo_unit_cb.currentText()
         config["camera_control"]["binning_horizontal"] = self.bin_hori_cb.currentText()
@@ -878,12 +843,10 @@ class Control(Scrollarea):
         # make sure sensor format is updated after image range settings
         self.clock_rate_cb.setCurrentText(config["camera_control"]["clock_rate"])
         self.conv_factor_cb.setCurrentText(config["camera_control"]["conversion_factor"])
-        for i in self.trig_source_rblist:
-            if i.text() == config["camera_control"]["trigger_source"]:
+        for i in self.trig_mode_rblist:
+            if i.text() == config["camera_control"]["trigger_mode"]:
                 i.setChecked(True)
                 break
-        self.trigger_mode_cb.setCurrentText(config["camera_control"]["trigger_mode"])
-        # make sure trigger mode is updated after trigger source, because for some trigger modes, trigger source box will be disabled
         self.expo_le.setText(config["camera_control"]["exposure_time"])
         # QLineEdit won't emit 'editingfinishede signal
         self.expo_unit_cb.setCurrentText(config["camera_control"]["exposure_unit"])
@@ -902,6 +865,7 @@ class ImageWin(Scrollarea):
         self.frame.setRowStretch(1,1)
         self.frame.setRowStretch(2,1)
         self.imgs_dict = {}
+        self.img_roi_dict ={}
         self.imgs_name = ["Background", "Signal", "Signal w/ bg subtraction"]
 
         self.place_sgn_imgs()
@@ -919,24 +883,24 @@ class ImageWin(Scrollarea):
             img = pg.ImageItem(lockAspect=True)
             plot.addItem(img)
 
-            if name == "Signal w/ bg subtraction":
-                self.img_roi = new_RectROI(pos = [self.parent.defaults["roi"].getint("xmin"),
-                                                  self.parent.defaults["roi"].getint("ymin")],
-                                           size = [self.parent.defaults["roi"].getint("xmax")-self.parent.defaults["roi"].getint("xmin"),
-                                                   self.parent.defaults["roi"].getint("ymax")-self.parent.defaults["roi"].getint("ymin")],
-                                           snapSize = 0,
-                                           scaleSnap = False,
-                                           translateSnap = False,
-                                           pen = "r")
-                                            # params ([x_start, y_start], [x_span, y_span])
-                self.img_roi.addScaleHandle([0, 0], [1, 1]) # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
-                self.img_roi.addScaleHandle([0, 0.5], [1, 0.5])
-                self.img_roi.addScaleHandle([1, 0.5], [0, 0.5])
-                self.img_roi.addScaleHandle([0.5, 0], [0.5, 1])
-                self.img_roi.addScaleHandle([0.5, 1], [0.5, 0])
-                plot.addItem(self.img_roi)
-                self.img_roi.sigRegionChanged.connect(self.img_roi_update)
-                self.img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
+            img_roi = new_RectROI(pos = [self.parent.defaults["roi"].getint("xmin"),
+                                         self.parent.defaults["roi"].getint("ymin")],
+                                  size = [self.parent.defaults["roi"].getint("xmax")-self.parent.defaults["roi"].getint("xmin"),
+                                          self.parent.defaults["roi"].getint("ymax")-self.parent.defaults["roi"].getint("ymin")],
+                                  snapSize = 0,
+                                  scaleSnap = False,
+                                  translateSnap = False,
+                                  pen = "r")
+                                  # params ([x_start, y_start], [x_span, y_span])
+            img_roi.addScaleHandle([0, 0], [1, 1]) # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
+            img_roi.addScaleHandle([0, 0.5], [1, 0.5])
+            img_roi.addScaleHandle([1, 0.5], [0, 0.5])
+            img_roi.addScaleHandle([0.5, 0], [0.5, 1])
+            img_roi.addScaleHandle([0.5, 1], [0.5, 0])
+            plot.addItem(img_roi)
+            img_roi.sigRegionChanged.connect(lambda roi=img_roi: self.img_roi_update(roi))
+            img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
+            self.img_roi_dict[name] = img_roi
 
             hist = pg.HistogramLUTItem()
             hist.setImageItem(img)
@@ -1011,13 +975,12 @@ class ImageWin(Scrollarea):
         self.scan_plot = self.scan_plot_widget.plot()
         self.frame.addWidget(self.scan_plot_widget, 2, 1)
 
-    def img_roi_update(self):
-        x_min = self.img_roi.pos()[0]
-        y_min = self.img_roi.pos()[1]
-        x_max = x_min + self.img_roi.size()[0]
-        y_max = y_min + self.img_roi.size()[1]
-        self.x_plot_lr.setRegion((x_min, x_max))
-        self.y_plot_lr.setRegion((y_min, y_max))
+    def img_roi_update(self, roi):
+        x_min = roi.pos()[0]
+        y_min = roi.pos()[1]
+        x_max = x_min + roi.size()[0]
+        y_max = y_min + roi.size()[1]
+
         self.parent.control.x_min_sb.setValue(round(x_min))
         self.parent.control.x_max_sb.setValue(round(x_max))
         self.parent.control.y_min_sb.setValue(round(y_min))
@@ -1026,20 +989,14 @@ class ImageWin(Scrollarea):
     def x_plot_lr_update(self):
         x_min = self.x_plot_lr.getRegion()[0]
         x_max = self.x_plot_lr.getRegion()[1]
-        y_min = self.img_roi.pos()[1]
-        y_max = y_min + self.img_roi.size()[1]
-        self.img_roi.setPos(pos=(x_min, y_min))
-        self.img_roi.setSize(size=(x_max-x_min, y_max-y_min))
+
         self.parent.control.x_min_sb.setValue(round(x_min))
         self.parent.control.x_max_sb.setValue(round(x_max))
 
     def y_plot_lr_update(self):
         y_min = self.y_plot_lr.getRegion()[0]
         y_max = self.y_plot_lr.getRegion()[1]
-        x_min = self.img_roi.pos()[0]
-        x_max = x_min + self.img_roi.size()[0]
-        self.img_roi.setPos(pos=(x_min, y_min))
-        self.img_roi.setSize(size=(x_max-x_min, y_max-y_min))
+
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
 
