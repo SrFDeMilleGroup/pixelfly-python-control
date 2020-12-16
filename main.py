@@ -9,7 +9,6 @@ import numpy as np
 from scipy import optimize
 import matplotlib.pyplot as plt
 from matplotlib import cm
-import configparser
 import PyQt5
 import pyqtgraph as pg
 import PyQt5.QtGui as QtGui
@@ -30,13 +29,20 @@ def steal_colormap(colorname="viridis", lut=6):
 
     return colordata_reform
 
-def fake_data(x_range=20, y_range=30, x_center=12, y_center=17, x_err=3, y_err=2, amp=100):
+def fake_data(xmax, ymax):
+    x_range=20
+    y_range=30
+    x_center=12
+    y_center=17
+    x_err=3
+    y_err=2
+    amp=100
+    noise_amp = 10
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
-    gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))/10*amp
-    gauss = np.repeat(gauss, 70, axis=0)
-    gauss = np.repeat(gauss, 35, axis=1)
-    gauss = gauss.astype("uint16")
+    gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))*noise_amp
+    gauss = np.repeat(gauss, round(xmax/x_range), axis=0)
+    gauss = np.repeat(gauss, round(ymax/y_range), axis=1)
 
     return gauss
 
@@ -62,7 +68,16 @@ def gaussianfit(data):
 
     errorfunction = lambda p: np.ravel(gaussian(*p)(*np.indices(data.shape))-data)
     p, success = optimize.leastsq(errorfunction, (amp, x_mean, y_mean, x_width, y_width, offset))
-    return p
+
+    p_dict = {}
+    p_dict["x_mean"] = p[1]
+    p_dict["y_mean"] = p[2]
+    p_dict["x_width"] = p[3]
+    p_dict["y_width"] = p[4]
+    p_dict["amp"] = p[0]
+    p_dict["offset"] = p[5]
+
+    return p_dict
 
 class Scrollarea(qt.QGroupBox):
     def __init__(self, parent, label="", type="grid"):
@@ -123,15 +138,21 @@ class CamThread(PyQt5.QtCore.QThread):
         super().__init__()
         self.parent = parent
         self.image_type = ["background", "signal"]
+        self.counter_limit = self.parent.control.num_img_to_take*len(self.image_type)
         self.counter = 0
-        self.camera_count_list = []
-        self.img_ave = np.zeros((self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
+
+        if self.parent.control.control_mode == "record":
+            self.camera_count_list = []
+            self.img_ave = np.zeros((self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
+        elif self.parent.control.control_mode == "scan":
+            self.camera_count_dict = {}
+
         self.parent.device.cam.record(number_of_images=4, mode='ring buffer')
         # number_of_images is buffer size in ring buffer mode, and has to be at least 4
         self.last_time = time.time()
 
     def run(self):
-        while len(self.camera_count_list) < self.parent.control.num_img_to_take and self.parent.control.active:
+        while self.counter < self.counter_limit and self.parent.control.active:
             type = self.image_type[self.counter%2] # odd-numbered image is background, even-numbered image is signal
             self.counter += 1
 
@@ -140,7 +161,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 time.sleep(0.5)
 
             while self.parent.control.active:
-                if self.parent.device.cam.rec.get_status()['dwProcImgCount'] >=self.counter:
+                if self.parent.device.cam.rec.get_status()['dwProcImgCount'] >= self.counter:
                     break
                 time.sleep(0.001)
 
@@ -162,19 +183,30 @@ class CamThread(PyQt5.QtCore.QThread):
                     image_bgsub_chop = image_bgsub[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
                                                     self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
                     cc = np.sum(image_bgsub_chop)
-                    self.camera_count_list.append(cc)
-                    num = len(self.camera_count_list)
+                    num = int(self.counter/len(self.image_type))
                     self.img_dict = {}
                     self.img_dict["type"] = "signal"
                     self.img_dict["num_image"] = num
                     self.img_dict["image"] = image
                     self.img_dict["image_bgsub"] = image_bgsub
                     self.img_dict["image_bgsub_chop"] = image_bgsub_chop
-                    self.img_ave = np.average(np.array([self.img_ave, self.img_dict["image_bgsub"]]), axis=0, weights=[(num-1)/num, 1/num])
-                    self.img_dict["image_ave"] = self.img_ave
                     self.img_dict["camera_count"] = np.format_float_scientific(cc, precision=4)
-                    self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
-                    self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(num), precision=4)
+
+                    if self.parent.control.control_mode == "record":
+                        self.camera_count_list.append(cc)
+                        self.img_ave = np.average(np.array([self.img_ave, self.img_dict["image_bgsub"]]), axis=0, weights=[(num-1)/num, 1/num])
+                        self.img_dict["image_ave"] = self.img_ave
+                        self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
+                        self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(num), precision=4)
+                    elif self.parent.control.control_mode == "scan":
+                        scan_param = self.parent.control.scan_config[f"Sequence element {num-1}"][self.parent.control.scan_param_name]
+                        if scan_param in self.camera_count_dict:
+                            self.camera_count_dict[scan_param] = np.append(self.camera_count_dict[scan_param], cc)
+                        else:
+                            self.camera_count_dict[scan_param] = np.array([cc])
+                        self.img_dict["scan_param"] = scan_param
+                        self.img_dict["camera_count_scan"] = self.camera_count_dict
+
                     self.signal.emit(self.img_dict)
 
                 else:
@@ -265,6 +297,9 @@ class Control(Scrollarea):
         self.gaussian_fit = self.parent.defaults["gaussian_fit"].getboolean("default")
         self.img_save = self.parent.defaults["image_save"].getboolean("default")
 
+        self.active = False
+        self.control_mode = None
+
         self.place_recording()
         self.place_image_control()
         self.place_cam_control()
@@ -279,11 +314,11 @@ class Control(Scrollarea):
         self.frame.addWidget(record_box)
 
         self.record_bt = qt.QPushButton("Record")
-        self.record_bt.clicked[bool].connect(lambda val: self.record())
+        self.record_bt.clicked[bool].connect(lambda val, mode="record": self.start(mode))
         record_frame.addWidget(self.record_bt, 0, 0)
 
         self.scan_bt = qt.QPushButton("Scan")
-        self.scan_bt.clicked[bool].connect(lambda val: self.scan())
+        self.scan_bt.clicked[bool].connect(lambda val, mode="scan": self.start(mode))
         record_frame.addWidget(self.scan_bt, 0, 1)
 
         self.stop_bt = qt.QPushButton("Stop")
@@ -580,16 +615,47 @@ class Control(Scrollarea):
         self.load_settings_bt.clicked[bool].connect(lambda val: self.load_settings())
         save_load_frame.addRow("Load settings:", self.load_settings_bt)
 
-    def record(self):
+    def start(self, mode):
+        self.control_mode = mode
         self.active = True
 
-        self.enable_widgets(False)
+        # clear camera count QLabels
+        self.camera_count.setText("0")
+        self.camera_count_mean.setText("0")
+        self.camera_count_err_mean.setText("0")
         self.num_image.setText("0")
+
+        # clear images
+        img = np.zeros((self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
+        for key, image_show in self.parent.image_win.imgs_dict.items():
+            image_show.setImage(img)
+        self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
+        self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
+        self.parent.image_win.ave_img.setImage(img)
+
+        # clear gaussian fit QLabels
+        self.amp.setText("0")
+        self.offset.setText("0")
+        self.x_mean.setText("0")
+        self.x_stand_dev.setText("0")
+        self.y_mean.setText("0")
+        self.y_stand_dev.setText("0")
 
         if self.img_save:
             with h5py.File(self.hdf_filename, "a") as hdf_file:
                 self.hdf_group_name = "run_"+time.strftime("%Y%m%d_%H%M%S")
                 hdf_file.create_group(self.hdf_group_name)
+
+        if self.control_mode == "scan":
+            self.scan_config = configparser.ConfigParser()
+            self.scan_config.read(self.parent.defaults["scan_file_name"]["default"])
+            self.num_img_to_take_sb.setValue(self.scan_config["Settings"].getint("element number"))
+            # self.num_img_to_take will be changed automatically
+            self.scan_param_name = self.scan_config["Settings"].get("scan param name")
+            self.scan_device = self.scan_config["Settings"].get("scan device")
+            self.parent.image_win.scan_plot_widget.setLabel("bottom", self.scan_device+" "+self.scan_param_name, units=self.scan_config["Settings"].get("unit"))
+
+        self.enable_widgets(False)
 
         self.rec = CamThread(self.parent)
         self.rec.signal.connect(self.img_ctrl_update)
@@ -600,13 +666,10 @@ class Control(Scrollarea):
         # but in that case, the while loop that waits for the image is running in the main thread,
         # so it will block the main thread.
 
-    def scan(self):
-        self.active = True
-        self.enable_widgets(False)
-
     def stop(self):
         if self.active:
             self.active = False
+            self.control_mode = None
             self.enable_widgets(True)
 
     @PyQt5.QtCore.pyqtSlot(dict)
@@ -620,27 +683,49 @@ class Control(Scrollarea):
             self.parent.image_win.imgs_dict["Signal"].setImage(img)
             img = img_dict["image_bgsub"]
             self.parent.image_win.imgs_dict["Signal w/ bg subtraction"].setImage(img)
-            self.parent.image_win.x_plot.setData(np.sum(img, axis=1))
-            self.parent.image_win.y_plot.setData(np.sum(img, axis=0))
-            self.parent.image_win.ave_img.setImage(img_dict["image_ave"])
-
+            self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
+            self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
             self.num_image.setText(str(img_dict["num_image"]))
             self.camera_count.setText(str(img_dict["camera_count"]))
-            self.camera_count_mean.setText(str(img_dict["camera_count_ave"]))
-            self.camera_count_err_mean.setText(str(img_dict["camera_count_err"]))
+
+            if self.control_mode == "record":
+                self.parent.image_win.ave_img.setImage(img_dict["image_ave"])
+                self.camera_count_mean.setText(str(img_dict["camera_count_ave"]))
+                self.camera_count_err_mean.setText(str(img_dict["camera_count_err"]))
+            elif self.control_mode == "scan":
+                x = np.array([])
+                y = np.array([])
+                err = np.array([])
+                for i, (param, cc_list) in enumerate(img_dict["camera_count_scan"].items()):
+                    x = np.append(x, float(param))
+                    y = np.append(y, np.mean(cc_list))
+                    err = np.append(err, np.std(cc_list)/np.sqrt(len(cc_list)))
+                order = x.argsort()
+                x = x[order]
+                y = y[order]
+                err = err[order]
+                self.parent.image_win.scan_plot_curve.setData(x, y, symbol='o')
+                self.parent.image_win.scan_plot_errbar.setData(x=x, y=y, top=err, bottom=err, beam=(x[-1]-x[0])/len(x)*0.2, pen=pg.mkPen('w', width=1.2))
 
             if self.gaussian_fit:
-                param = gaussianfit(img_dict["image_bgsub_chop"]) # in order of [amp, x_mean, y_mean, x_width, y_width, offset]
-                self.amp.setText("{:.2f}".format(param[0]))
-                self.offset.setText("{:.2f}".format(param[5]))
-                self.x_mean.setText("{:.2f}".format(param[1]+self.roi["xmin"]))
-                self.x_stand_dev.setText("{:.2f}".format(param[3]))
-                self.y_mean.setText("{:.2f}".format(param[2]+self.roi["ymin"]))
-                self.y_stand_dev.setText("{:.2f}".format(param[4]))
+                param = gaussianfit(img_dict["image_bgsub_chop"])
+                self.amp.setText("{:.2f}".format(param["amp"]))
+                self.offset.setText("{:.2f}".format(param["offset"]))
+                self.x_mean.setText("{:.2f}".format(param["x_mean"]+self.roi["xmin"]))
+                self.x_stand_dev.setText("{:.2f}".format(param["x_width"]))
+                self.y_mean.setText("{:.2f}".format(param["y_mean"]+self.roi["ymin"]))
+                self.y_stand_dev.setText("{:.2f}".format(param["y_width"]))
 
             if self.img_save:
                 with h5py.File(self.hdf_filename, "r+") as hdf_file:
                     root = hdf_file.require_group(self.hdf_group_name)
+                    if self.control_mode == "scan":
+                        root.attrs["scanned parameter"] = self.scan_device+" "+self.scan_param_name
+                        root.attrs["number of images"] = self.num_img_to_take
+                        root = root.require_group(self.scan_param_name+"_"+img_dict["scan_param"])
+                        root.attrs["scanned parameter"] = self.scan_device+" "+self.scan_param_name
+                        root.attrs["scanned param value"] = img_dict["scan_param"]
+                        root.attrs["scanned param unit"] = self.scan_config["Settings"].get("unit")
                     dset = root.create_dataset(
                                     name                 = "image" + "_{:06d}".format(img_dict["num_image"]),
                                     data                 = img_dict["image_bgsub_chop"],
@@ -649,6 +734,10 @@ class Control(Scrollarea):
                                     compression          = "gzip",
                                     compression_opts     = 4
                                 )
+                    dset.attrs["camera count"] = img_dict["camera_count"]
+                    if self.gaussian_fit:
+                        for key, val in param.items():
+                            dset.attrs["2D gaussian fit"+key] = val
 
     def enable_widgets(self, arg):
         self.stop_bt.setEnabled(not arg)
@@ -859,8 +948,8 @@ class ImageWin(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="Images", type="grid")
         self.colormap = steal_colormap()
-        self.frame.setColumnStretch(0,2)
-        self.frame.setColumnStretch(1,1)
+        self.frame.setColumnStretch(0,7)
+        self.frame.setColumnStretch(1,4)
         self.frame.setRowStretch(0,1)
         self.frame.setRowStretch(1,1)
         self.frame.setRowStretch(2,1)
@@ -892,7 +981,8 @@ class ImageWin(Scrollarea):
                                   translateSnap = False,
                                   pen = "r")
                                   # params ([x_start, y_start], [x_span, y_span])
-            img_roi.addScaleHandle([0, 0], [1, 1]) # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
+            img_roi.addScaleHandle([0, 0], [1, 1])
+            # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
             img_roi.addScaleHandle([0, 0.5], [1, 0.5])
             img_roi.addScaleHandle([1, 0.5], [0, 0.5])
             img_roi.addScaleHandle([0.5, 0], [0.5, 1])
@@ -907,7 +997,7 @@ class ImageWin(Scrollarea):
             graphlayout.addItem(hist)
             hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
-            self.data = fake_data()
+            self.data = fake_data(self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"])
             img.setImage(self.data)
 
             self.imgs_dict[name] = img
@@ -920,35 +1010,35 @@ class ImageWin(Scrollarea):
         x_data = np.sum(self.data, axis=1)
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
         self.frame.addWidget(graphlayout, 0, 1, 2, 1)
-        x_plot_item = graphlayout.addPlot(title="Camera count v.s. X")
-        x_plot_item.showGrid(True, True)
-        x_plot_item.setLabel("top")
-        # x_plot_item.getAxis("top").setTicks([])
-        x_plot_item.getAxis("top").setStyle(**tickstyle)
-        x_plot_item.setLabel("right")
-        # x_plot_item.getAxis("right").setTicks([])
-        x_plot_item.getAxis("right").setStyle(**tickstyle)
-        self.x_plot = x_plot_item.plot(x_data)
+        x_plot = graphlayout.addPlot(title="Camera count v.s. X")
+        x_plot.showGrid(True, True)
+        x_plot.setLabel("top")
+        # x_plot.getAxis("top").setTicks([])
+        x_plot.getAxis("top").setStyle(**tickstyle)
+        x_plot.setLabel("right")
+        # x_plot.getAxis("right").setTicks([])
+        x_plot.getAxis("right").setStyle(**tickstyle)
+        self.x_plot_curve = x_plot.plot(x_data)
         self.x_plot_lr = pg.LinearRegionItem([self.parent.defaults["roi"].getint("xmin"),
                                                 self.parent.defaults["roi"].getint("xmax")], swapMode="block")
         # no "snap" option for LinearRegion item?
         self.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
-        x_plot_item.addItem(self.x_plot_lr)
+        x_plot.addItem(self.x_plot_lr)
         self.x_plot_lr.sigRegionChanged.connect(self.x_plot_lr_update)
 
         graphlayout.nextRow()
         y_data = np.sum(self.data, axis=0)
-        y_plot_item = graphlayout.addPlot(title="Camera count v.s. Y")
-        y_plot_item.showGrid(True, True)
-        y_plot_item.setLabel("top")
-        y_plot_item.getAxis("top").setStyle(**tickstyle)
-        y_plot_item.setLabel("right")
-        y_plot_item.getAxis("right").setStyle(**tickstyle)
-        self.y_plot = y_plot_item.plot(y_data)
+        y_plot = graphlayout.addPlot(title="Camera count v.s. Y")
+        y_plot.showGrid(True, True)
+        y_plot.setLabel("top")
+        y_plot.getAxis("top").setStyle(**tickstyle)
+        y_plot.setLabel("right")
+        y_plot.getAxis("right").setStyle(**tickstyle)
+        self.y_plot_curve = y_plot.plot(y_data)
         self.y_plot_lr = pg.LinearRegionItem([self.parent.defaults["roi"].getint("ymin"),
                                                 self.parent.defaults["roi"].getint("ymax")], swapMode="block")
         self.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
-        y_plot_item.addItem(self.y_plot_lr)
+        y_plot.addItem(self.y_plot_lr)
         self.y_plot_lr.sigRegionChanged.connect(self.y_plot_lr_update)
 
     def place_ave_image(self):
@@ -962,17 +1052,23 @@ class ImageWin(Scrollarea):
         graphlayout.addItem(hist)
         hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
-        data = fake_data()
-        self.ave_img.setImage(data)
+        self.ave_img.setImage(fake_data(self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
 
     def place_scan_plot(self):
+        tickstyle = {"showValues": False}
+
         self.scan_plot_widget = pg.PlotWidget(title="Camera count v.s. Scan param.")
         self.scan_plot_widget.showGrid(True, True)
+        self.scan_plot_widget.setLabel("top")
+        self.scan_plot_widget.getAxis("top").setStyle(**tickstyle)
+        self.scan_plot_widget.setLabel("right")
+        self.scan_plot_widget.getAxis("right").setStyle(**tickstyle)
         fontstyle = {"color": "#919191", "font-size": "11pt"}
         self.scan_plot_widget.setLabel("bottom", "Scan parameter", **fontstyle)
-        # tickstyle = {"tickTextOffset": 0, "tickTextHeight": -10, "tickTextWidth": 0}
-        # self.scan_plot_widget.getAxis("bottom").setStyle(**tickstyle)
-        self.scan_plot = self.scan_plot_widget.plot()
+        self.scan_plot_widget.getAxis("bottom").enableAutoSIPrefix(False)
+        self.scan_plot_curve = self.scan_plot_widget.plot()
+        self.scan_plot_errbar = pg.ErrorBarItem()
+        self.scan_plot_widget.addItem(self.scan_plot_errbar)
         self.frame.addWidget(self.scan_plot_widget, 2, 1)
 
     def img_roi_update(self, roi):
@@ -999,6 +1095,7 @@ class ImageWin(Scrollarea):
 
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
+
 
 class CameraGUI(qt.QMainWindow):
     def __init__(self, app):
