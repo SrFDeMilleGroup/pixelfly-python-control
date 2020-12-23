@@ -171,7 +171,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 image = np.flip(image.T, 1).astype("float")
 
                 if type == "background":
-                    image = np.zeros(image.shape)
+                    # image = np.zeros(image.shape)
                     self.image_bg = image
                     self.img_dict = {}
                     self.img_dict["type"] = "background"
@@ -199,7 +199,7 @@ class CamThread(PyQt5.QtCore.QThread):
                         self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
                         self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(num), precision=4)
                     elif self.parent.control.control_mode == "scan":
-                        scan_param = self.parent.control.scan_config[f"Sequence element {num-1}"][self.parent.control.scan_param_name]
+                        scan_param = self.parent.control.scan_config[f"Sequence element {num-1}"][self.parent.control.scan_elem_name]
                         if scan_param in self.camera_count_dict:
                             self.camera_count_dict[scan_param] = np.append(self.camera_count_dict[scan_param], cc)
                         else:
@@ -648,12 +648,16 @@ class Control(Scrollarea):
 
         if self.control_mode == "scan":
             self.scan_config = configparser.ConfigParser()
+            self.scan_config.optionxform = str
             self.scan_config.read(self.parent.defaults["scan_file_name"]["default"])
             self.num_img_to_take_sb.setValue(self.scan_config["Settings"].getint("element number"))
             # self.num_img_to_take will be changed automatically
-            self.scan_param_name = self.scan_config["Settings"].get("scan param name")
+            self.scan_param_name = self.scan_config["Settings"].get("scan param")
+            self.scan_param_name = self.scan_param_name.split(",")[0].strip()
             self.scan_device = self.scan_config["Settings"].get("scan device")
-            self.parent.image_win.scan_plot_widget.setLabel("bottom", self.scan_device+" "+self.scan_param_name, units=self.scan_config["Settings"].get("unit"))
+            self.scan_device = self.scan_device.split(",")[0].strip()
+            self.scan_elem_name = self.scan_device + " [" + self.scan_param_name + "]"
+            self.parent.image_win.scan_plot_widget.setLabel("bottom", self.scan_device+": "+self.scan_param_name)
 
         self.enable_widgets(False)
 
@@ -720,12 +724,11 @@ class Control(Scrollarea):
                 with h5py.File(self.hdf_filename, "r+") as hdf_file:
                     root = hdf_file.require_group(self.hdf_group_name)
                     if self.control_mode == "scan":
-                        root.attrs["scanned parameter"] = self.scan_device+" "+self.scan_param_name
+                        root.attrs["scanned parameter"] = self.scan_device+": "+self.scan_param_name
                         root.attrs["number of images"] = self.num_img_to_take
                         root = root.require_group(self.scan_param_name+"_"+img_dict["scan_param"])
-                        root.attrs["scanned parameter"] = self.scan_device+" "+self.scan_param_name
+                        root.attrs["scanned parameter"] = self.scan_device+": "+self.scan_param_name
                         root.attrs["scanned param value"] = img_dict["scan_param"]
-                        root.attrs["scanned param unit"] = self.scan_config["Settings"].get("unit")
                     dset = root.create_dataset(
                                     name                 = "image" + "_{:06d}".format(img_dict["num_image"]),
                                     data                 = img_dict["image_bgsub_chop"],
@@ -735,6 +738,10 @@ class Control(Scrollarea):
                                     compression_opts     = 4
                                 )
                     dset.attrs["camera count"] = img_dict["camera_count"]
+                    dset.attrs["region of interest: xmin"] = self.roi["xmin"]
+                    dset.attrs["region of interest: xmax"] = self.roi["xmax"]
+                    dset.attrs["region of interest: ymin"] = self.roi["ymin"]
+                    dset.attrs["region of interest: ymax"] = self.roi["ymax"]
                     if self.gaussian_fit:
                         for key, val in param.items():
                             dset.attrs["2D gaussian fit"+key] = val
