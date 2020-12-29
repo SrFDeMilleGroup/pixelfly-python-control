@@ -1,6 +1,15 @@
 # pixelfly-python-control
 
-This graphical user interface is designed for [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific camera, for the purpose of applications in atomic, molecular and optical (AMO) physics experiments.
+This graphical user interface of [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific camera is designed for applications in atomic, molecular and optical (AMO) physics experiments.
+
+Key features include:
+- camera configuration
+- real time image display
+- region of interest (ROI) selection
+- real time image statistics (including 2D Gaussian fit)
+- target system parameter scan (in coordinate with other devices) 
+- save and load program settings
+
 
 Written in Python 3.8.6. Frequently tested on Window 7. A 24-inch 1080p monitor is recommended for the best graphical display.
 
@@ -15,7 +24,7 @@ Default settings, legitimate choices and some camera specifications are listed i
 	- This section allows users to start or stop a camera recording task at any time. There are two modes of image acquiring, **Record** and **Scan**. Different plots and indicators are updated in different modes. Current version of the program assumes that background images and signal images are taken in an alternate manner, i.e. a background image is always followed by a signal image, and vise versa. Control widgets are disabled and grayed out during image acquiring, to avoid accidental parameter change.
 	- In **Record** mode, the program and the camera take as many images as users specify in the Image Control section, and average over all the acquired images.
 	- In **Scan** mode, the program reads the latest scan sequence file (.ini) and take images as this file indicates. This file is supposed to include a scan sequence as well as scan settings. Such file can be generated from other device control programs in our experiment ([Example 1](https://github.com/qw372/SrF-lab-control), [Example 2](https://github.com/qw372/SpinCore-Python-Control)). This mode is used in conjunction with other devices to examine target system's (e.g. atoms or molecules) response to the scan parameter(s).
-	- Camera count in region of interest (ROI) in the current background-subtracted image is updated in real time in both modes.
+	- Camera count in ROI in the current background-subtracted image is updated in real time in both modes.
 	- Mean value and error of mean (standard deviation/sqrt(number of images)) of camera counts are updated here in numbers in **Record** mode. In **Scan** mode, those are plotted in _Camera Count v.s. Scan param._ plot.
 
 
@@ -43,7 +52,7 @@ Default settings, legitimate choices and some camera specifications are listed i
 - All images/plots support interactive mouse control.
 - Background image, signal image and background-subtracted signal image are nested in a tab widget. These images, together with x/y-axis camera count plots, are updated in real time in both **Record** and **Scan** mode.
 - Averaged image is only updated in **Record** mode
-- _Camera Count v.s. Scan param._ plot is only updated in **Scan** mode. Currently this is a 1D plot, so camera count can only be ploted v.s. one scan parameter.
+- _Camera Count v.s. Scan param._ plot is only updated in **Scan** mode. Its error bar shows error of mean. Currently this is a 1D plot, so camera count can only be ploted v.s. one scan parameter.
 
 
 ## Workflow in a nutshell
