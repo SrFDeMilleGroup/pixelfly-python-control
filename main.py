@@ -1002,8 +1002,7 @@ class ImageWin(Scrollarea):
             hist = pg.HistogramLUTItem()
             hist.setImageItem(img)
             graphlayout.addItem(hist)
-            hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.
-            map})
+            hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
             self.data = fake_data(self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"])
             img.setImage(self.data)
