@@ -1,6 +1,6 @@
 # pixelfly-python-control
 
-This graphical user interface is designed for [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific cameras, for the purpose of applications in atomic, molecular and optical (AMO) physics experiments.
+This graphical user interface is designed for [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific camera, for the purpose of applications in atomic, molecular and optical (AMO) physics experiments.
 
 Written in Python 3.8.6. Frequently tested on Window 7. A 24-inch 1080p monitor is recommended for the best graphical display.
 
