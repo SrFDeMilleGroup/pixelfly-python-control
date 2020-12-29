@@ -29,6 +29,7 @@ def steal_colormap(colorname="viridis", lut=6):
 
     return colordata_reform
 
+# generate a fake image of 2D gaussian distribution image
 def fake_data(xmax, ymax):
     x_range=20
     y_range=30
@@ -41,6 +42,8 @@ def fake_data(xmax, ymax):
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
     dst = np.sqrt((x-x_center)**2/(2*x_err**2)+(y-y_center)**2/2/(2*y_err**2)).T
     gauss = np.exp(-dst)*amp + np.random.random_sample(size=(x_range, y_range))*noise_amp
+
+    # repeat this 2D array so it can have (almost) the same size as a real image from the pixelfly camera
     gauss = np.repeat(gauss, round(xmax/x_range), axis=0)
     gauss = np.repeat(gauss, round(ymax/y_range), axis=1)
 
@@ -52,8 +55,10 @@ def gaussian(amp, x_mean, y_mean, x_width, y_width, offset):
 
     return lambda x, y: amp*np.exp(-0.5*((x-x_mean)/x_width)**2-0.5*((y-y_mean)/y_width)**2) + offset
 
+# return a 2D gaussian fit
+# generally a 2D gaussian fit can have 7 params, 6 of them are implemented here (the excluded one is an angle)
+# codes adapted from https://scipy-cookbook.readthedocs.io/items/FittingData.html
 def gaussianfit(data):
-    # codes adapted from https://scipy-cookbook.readthedocs.io/items/FittingData.html
     # calculate moments for initial guess
     total = np.sum(data)
     X, Y = np.indices(data.shape)
@@ -66,6 +71,7 @@ def gaussianfit(data):
     offset = (data[0, :].sum()+data[-1, :].sum()+data[:, 0].sum()+data[:, -1].sum())/np.sum(data.shape)/2
     amp = data.max() - offset
 
+    # use optimize function to obtain 2D gaussian fit
     errorfunction = lambda p: np.ravel(gaussian(*p)(*np.indices(data.shape))-data)
     p, success = optimize.leastsq(errorfunction, (amp, x_mean, y_mean, x_width, y_width, offset))
 
@@ -79,6 +85,7 @@ def gaussianfit(data):
 
     return p_dict
 
+# create a scroll area of a specific layout, e.g. form, grid, vbox, etc
 class Scrollarea(qt.QGroupBox):
     def __init__(self, parent, label="", type="grid"):
         super().__init__()
@@ -90,7 +97,7 @@ class Scrollarea(qt.QGroupBox):
 
         scroll = qt.QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameStyle(0x10)
+        scroll.setFrameStyle(0x10) # see https://doc.qt.io/qt-5/qframe.html for different frame styles
         outer_layout.addWidget(scroll)
 
         box = qt.QWidget()
@@ -109,6 +116,7 @@ class Scrollarea(qt.QGroupBox):
 
         box.setLayout(self.frame)
 
+# subclass the pyqtgraph rectangular ROI class so we can disable/modify some of its properties
 class new_RectROI(pg.RectROI):
     # see https://pyqtgraph.readthedocs.io/en/latest/graphicsItems/roi.html#pyqtgraph.ROI.checkPointMove
     def __init__(self, pos, size, centered=False, sideScalers=False, **args):
@@ -130,7 +138,8 @@ class new_RectROI(pg.RectROI):
     def checkPointMove(self, handle, pos, modifiers):
         return self.resizable
 
-
+# the thread called when the program starts to interface with camera and take images
+# this thread waits unitl a new image is available and read it out from the camera
 class CamThread(PyQt5.QtCore.QThread):
     signal = PyQt5.QtCore.pyqtSignal(dict)
 
@@ -157,21 +166,24 @@ class CamThread(PyQt5.QtCore.QThread):
             self.counter += 1
 
             if self.parent.device.trigger_mode == "software":
-                self.parent.device.cam.sdk.force_trigger() # softwarely trigger pixelfly camera
+                self.parent.device.cam.sdk.force_trigger() # software-ly trigger the camera
                 time.sleep(0.5)
 
             while self.parent.control.active:
+                # wait until a new image is available,
+                # this step will block the thread, so it can;t be in the main thread
                 if self.parent.device.cam.rec.get_status()['dwProcImgCount'] >= self.counter:
                     break
                 time.sleep(0.001)
 
             if self.parent.control.active:
                 image, meta = self.parent.device.cam.image(image_number=0xFFFFFFFF) # readout the lastest image
-                # image is in "unit16" data type
+                # image is in "unit16" data type, althought it only has 14 non-zero bits at most
+                # convert the image data type to float, to avoid overflow
                 image = np.flip(image.T, 1).astype("float")
 
+                # after a new image is read out
                 if type == "background":
-                    # image = np.zeros(image.shape)
                     self.image_bg = image
                     self.img_dict = {}
                     self.img_dict["type"] = "background"
@@ -179,10 +191,10 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.signal.emit(self.img_dict)
 
                 elif type == "signal":
-                    image_bgsub = image - self.image_bg # "uint16" can't represent negative number
+                    image_bgsub = image - self.image_bg
                     image_bgsub_chop = image_bgsub[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
                                                     self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
-                    cc = np.sum(image_bgsub_chop)
+                    cc = np.sum(image_bgsub_chop) # camera count
                     num = int(self.counter/len(self.image_type))
                     self.img_dict = {}
                     self.img_dict["type"] = "signal"
@@ -193,45 +205,56 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.img_dict["camera_count"] = np.format_float_scientific(cc, precision=4)
 
                     if self.parent.control.control_mode == "record":
+                        # a list to save camera count of every single image
                         self.camera_count_list.append(cc)
+                        # the average image
                         self.img_ave = np.average(np.array([self.img_ave, self.img_dict["image_bgsub"]]), axis=0, weights=[(num-1)/num, 1/num])
                         self.img_dict["image_ave"] = self.img_ave
+                        # camera count statistics, mean and error of mean = stand. dev. / sqrt(image number)
                         self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
                         self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(num), precision=4)
                     elif self.parent.control.control_mode == "scan":
+                        # value of the scan parameter
                         scan_param = self.parent.control.scan_config[f"Sequence element {num-1}"][self.parent.control.scan_elem_name]
+                        # a dictionary that saves values of scan parameters as keys and a list of camera counts of corresponding images as vals
                         if scan_param in self.camera_count_dict:
                             self.camera_count_dict[scan_param] = np.append(self.camera_count_dict[scan_param], cc)
                         else:
                             self.camera_count_dict[scan_param] = np.array([cc])
-                        self.img_dict["scan_param"] = scan_param
                         self.img_dict["camera_count_scan"] = self.camera_count_dict
+                        self.img_dict["scan_param"] = scan_param
 
+                    # transfer saved data back to main thread by signal-slot mechanism
                     self.signal.emit(self.img_dict)
 
                 else:
                     print("Image type not supported.")
 
-                # Not sure about the reason, but if I just update imges in the main thread from here, it sometimes work but sometimes not.
-                # It seems that such signal-slot way is preferred,
+                # If I call "update imge" function here to update images in main thread, it sometimes work but sometimes not.
+                # It may be because PyQt is not thread safe. A signal-slot way seemed to be preferred,
                 # e.g. https://stackoverflow.com/questions/54961905/real-time-plotting-using-pyqtgraph-and-threading
 
                 print(f"image {self.counter}: "+"{:.5f} s".format(time.time()-self.last_time))
 
+        # stop the camera after taking required number of images.
         self.parent.device.cam.stop()
 
 
+# the class that handles camera interface (except taking images) and configuration
 class pixelfly:
     def __init__(self, parent):
         self.parent = parent
 
         try:
+            # due to some unknow issues in computer IO and the way pco package is coded,
+            # an explicit assignment to "interface" keyword is required
             self.cam = pco.Camera(interface='USB 2.0')
         except Exception as err:
             logging.error(traceback.format_exc())
             logging.error("Can't open camera")
             return
 
+        # initialize camera
         self.set_sensor_format(self.parent.defaults["sensor_format"]["default"])
         self.set_clock_rate(self.parent.defaults["clock_rate"]["default"])
         self.set_conv_factor(self.parent.defaults["conv_factor"]["default"])
@@ -253,6 +276,7 @@ class pixelfly:
         self.cam.configuration = {"pixel rate": rate}
         # print(f"clock rate = {arg}")
 
+    # conversion factor, which is 1/gain or number of electrons/count
     def set_conv_factor(self, arg):
         conv = self.parent.defaults["conv_factor"].getint(arg)
         self.cam.sdk.set_conversion_factor(conv)
@@ -270,41 +294,58 @@ class pixelfly:
         self.cam.configuration = {'exposure time': expo_time}
         # print(f"exposure time (in seconds) = {expo_time}")
 
+    # 4*4 binning at most
     def set_binning(self, bin_h, bin_v):
         self.binning = {"horizontal": int(bin_h), "vertical": int(bin_v)}
         self.cam.configuration = {'binning': (self.binning["horizontal"], self.binning["vertical"])}
         # print(f"binning = {bin_h} (horizontal), {bin_v} (vertical)")
 
+    # image size of camera returned image, depends on sensor format and binning
     def set_image_shape(self):
         format_str = self.sensor_format + " absolute_"
         self.image_shape = {"xmax": int(self.parent.defaults["sensor_format"].getint(format_str+"xmax")/self.binning["horizontal"]),
                             "ymax": int(self.parent.defaults["sensor_format"].getint(format_str+"ymax")/self.binning["vertical"])}
 
 
+# the class that places elements in UI and handles data processing
 class Control(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="", type="vbox")
         self.setMaximumWidth(400)
         self.frame.setContentsMargins(0,0,0,0)
-        self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit") # biggest matrix we can do gaussian fit to
+        # number of pixels of the largest image we can do gaussian fit to in real time (i.e. updating in every experimental cycle)
+        # it depends on CPU power and duration of experimental cycle
+        self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit")
+
+        # file name of the hdf file we save image to
         self.hdf_filename = self.parent.defaults["image_save"]["file_name"]
 
+        # number of images to take in each run
         self.num_img_to_take = self.parent.defaults["image_number"].getint("default")
+
+        # image region of interest
         self.roi = {"xmin": self.parent.defaults["roi"].getint("xmin"),
                     "xmax": self.parent.defaults["roi"].getint("xmax"),
                     "ymin": self.parent.defaults["roi"].getint("ymin"),
                     "ymax": self.parent.defaults["roi"].getint("ymax")}
+
+        # boolean variables
         self.gaussian_fit = self.parent.defaults["gaussian_fit"].getboolean("default")
         self.img_save = self.parent.defaults["image_save"].getboolean("default")
 
+        # boolean variable, turned on when the camera starts to take images
         self.active = False
+
+        # control mode, can be "record" or "scan" in current implementation
         self.control_mode = None
 
+        # places GUI elements
         self.place_recording()
         self.place_image_control()
         self.place_cam_control()
         self.place_save_load()
 
+    # place recording gui elements
     def place_recording(self):
         record_box = qt.QGroupBox("Recording")
         record_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -326,6 +367,7 @@ class Control(Scrollarea):
         record_frame.addWidget(self.stop_bt, 0, 2)
         self.stop_bt.setEnabled(False)
 
+        # display camera count in real time
         record_frame.addWidget(qt.QLabel("Camera count:"), 1, 0, 1, 1)
         self.camera_count = qt.QLabel()
         self.camera_count.setText("0")
@@ -333,6 +375,7 @@ class Control(Scrollarea):
         self.camera_count.setToolTip("after background subtraction")
         record_frame.addWidget(self.camera_count, 1, 1, 1, 2)
 
+        # display mean of camera count in real time in "record" mode
         record_frame.addWidget(qt.QLabel("Cam. mean:"), 2, 0, 1, 1)
         self.camera_count_mean = qt.QLabel()
         self.camera_count_mean.setText("0")
@@ -340,6 +383,7 @@ class Control(Scrollarea):
         self.camera_count_mean.setToolTip("after background subtraction")
         record_frame.addWidget(self.camera_count_mean, 2, 1, 1, 2)
 
+        # display error of mean of camera count in real time in "record" mode
         record_frame.addWidget(qt.QLabel("Cam. error:"), 3, 0, 1, 1)
         self.camera_count_err_mean = qt.QLabel()
         self.camera_count_err_mean.setText("0")
@@ -347,6 +391,7 @@ class Control(Scrollarea):
         self.camera_count_err_mean.setToolTip("after background subtraction")
         record_frame.addWidget(self.camera_count_err_mean, 3, 1, 1, 2)
 
+    # place image control gui elements
     def place_image_control(self):
         img_ctrl_box = qt.QGroupBox("Image Control")
         img_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -354,6 +399,7 @@ class Control(Scrollarea):
         img_ctrl_box.setLayout(img_ctrl_frame)
         self.frame.addWidget(img_ctrl_box)
 
+        # a spinbox to set number of images to take in next run
         self.num_img_to_take_sb = qt.QSpinBox()
         num_img_upperlimit = self.parent.defaults["image_number"].getint("max")
         self.num_img_to_take_sb.setRange(1, num_img_upperlimit)
@@ -361,6 +407,7 @@ class Control(Scrollarea):
         self.num_img_to_take_sb.valueChanged[int].connect(lambda val: self.set_num_img(val))
         img_ctrl_frame.addRow("Num of image to take:", self.num_img_to_take_sb)
 
+        # spinboxes to set image region of interest in x
         self.x_min_sb = qt.QSpinBox()
         self.x_min_sb.setRange(0, self.roi["xmax"]-1)
         self.x_min_sb.setValue(self.roi["xmin"])
@@ -380,6 +427,7 @@ class Control(Scrollarea):
         x_range_layout.addWidget(self.x_max_sb)
         img_ctrl_frame.addRow("ROI X range:", x_range_box)
 
+        # spinboxes to set image region of interest in y
         self.y_min_sb = qt.QSpinBox()
         self.y_min_sb.setRange(0, self.roi["ymax"]-1)
         self.y_min_sb.setValue(self.roi["ymin"])
@@ -399,6 +447,7 @@ class Control(Scrollarea):
         y_range_layout.addWidget(self.y_max_sb)
         img_ctrl_frame.addRow("ROI Y range:", y_range_box)
 
+        # display number of images that have been taken
         self.num_image = qt.QLabel()
         self.num_image.setText("0")
         self.num_image.setStyleSheet("background-color: gray;")
@@ -418,6 +467,7 @@ class Control(Scrollarea):
         # image_shape_layout.addWidget(self.image_height)
         # img_ctrl_frame.addRow("Image width x height:", image_shape_box)
 
+        # set whether to do gaussian fit in real time
         self.gauss_fit_chb = qt.QCheckBox()
         self.gauss_fit_chb.setTristate(False)
         self.gauss_fit_chb.setChecked(self.gaussian_fit)
@@ -431,6 +481,7 @@ class Control(Scrollarea):
             self.gauss_fit_chb.setChecked(False)
             self.gauss_fit_chb.setEnabled(False)
 
+        # set whether to save image to a local file
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
         self.img_save_chb.setChecked(self.img_save)
@@ -440,6 +491,7 @@ class Control(Scrollarea):
 
         img_ctrl_frame.addRow("------------------", qt.QWidget())
 
+        # display 2D gaussian fit results
         self.x_mean = qt.QLabel()
         self.x_mean.setMaximumWidth(90)
         self.x_mean.setText("0")
@@ -486,6 +538,7 @@ class Control(Scrollarea):
         self.offset.setStyleSheet("QWidget{background-color: gray;}")
         img_ctrl_frame.addRow("2D gaussian fit (offset):", self.offset)
 
+    # place camera control gui elements
     def place_cam_control(self):
         self.cam_ctrl_box = qt.QGroupBox("Camera Control")
         self.cam_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -493,6 +546,7 @@ class Control(Scrollarea):
         self.cam_ctrl_box.setLayout(cam_ctrl_frame)
         self.frame.addWidget(self.cam_ctrl_box)
 
+        # set sensor format
         self.sensor_format_cb = qt.QComboBox()
         self.sensor_format_cb.setMaximumWidth(200)
         self.sensor_format_cb.setMaximumHeight(20)
@@ -503,6 +557,7 @@ class Control(Scrollarea):
         self.sensor_format_cb.currentTextChanged[str].connect(lambda val: self.set_sensor_format(val))
         cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
+        # set clock rate
         self.clock_rate_cb = qt.QComboBox()
         self.clock_rate_cb.setMaximumWidth(200)
         self.clock_rate_cb.setMaximumHeight(20)
@@ -514,6 +569,7 @@ class Control(Scrollarea):
         self.clock_rate_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_clock_rate(val))
         cam_ctrl_frame.addRow("Clock rate:", self.clock_rate_cb)
 
+        # set conversion factor
         self.conv_factor_cb = qt.QComboBox()
         self.conv_factor_cb.setMaximumWidth(200)
         self.conv_factor_cb.setMaximumHeight(20)
@@ -526,6 +582,7 @@ class Control(Scrollarea):
         self.conv_factor_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_conv_factor(val))
         cam_ctrl_frame.addRow("Conversion factor:", self.conv_factor_cb)
 
+        # set trigger mode
         self.trig_mode_rblist = []
         trig_bg = qt.QButtonGroup(self.parent)
         self.trig_box = qt.QWidget()
@@ -543,6 +600,7 @@ class Control(Scrollarea):
             trig_layout.addWidget(trig_mode_rb)
         cam_ctrl_frame.addRow("Trigger mode:", self.trig_box)
 
+        # set exposure time and unit
         self.expo_le = qt.QLineEdit() # try qt.QDoubleSpinBox() ?
         default = self.parent.defaults["expo_time"].getfloat("default")
         default_unit = self.parent.defaults["expo_unit"]["default"]
@@ -567,6 +625,7 @@ class Control(Scrollarea):
         expo_layout.addWidget(self.expo_unit_cb)
         cam_ctrl_frame.addRow("Exposure time:", expo_box)
 
+        # set binning
         self.bin_hori_cb = qt.QComboBox()
         self.bin_vert_cb = qt.QComboBox()
         op = [x.strip() for x in self.parent.defaults["binning"]["options"].split(',')]
@@ -586,6 +645,7 @@ class Control(Scrollarea):
         bin_layout.addWidget(self.bin_vert_cb)
         cam_ctrl_frame.addRow("Binning H x V:", bin_box)
 
+    # place save/load program configuration gui elements
     def place_save_load(self):
         self.save_load_box = qt.QGroupBox("Save/Load Settings")
         self.save_load_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -615,6 +675,7 @@ class Control(Scrollarea):
         self.load_settings_bt.clicked[bool].connect(lambda val: self.load_settings())
         save_load_frame.addRow("Load settings:", self.load_settings_bt)
 
+    # start to take images
     def start(self, mode):
         self.control_mode = mode
         self.active = True
@@ -641,6 +702,7 @@ class Control(Scrollarea):
         self.y_mean.setText("0")
         self.y_stand_dev.setText("0")
 
+        # initialize a hdf group if image saving is required
         if self.img_save:
             with h5py.File(self.hdf_filename, "a") as hdf_file:
                 self.hdf_group_name = "run_"+time.strftime("%Y%m%d_%H%M%S")
@@ -659,30 +721,36 @@ class Control(Scrollarea):
             self.scan_elem_name = self.scan_device + " [" + self.scan_param_name + "]"
             self.parent.image_win.scan_plot_widget.setLabel("bottom", self.scan_device+": "+self.scan_param_name)
 
+        # disable and gray out image/camera controls, in case of any accidental parameter change
         self.enable_widgets(False)
 
+        # initialize a image taking thread
         self.rec = CamThread(self.parent)
         self.rec.signal.connect(self.img_ctrl_update)
         self.rec.finished.connect(self.stop)
-        self.rec.start()
+        self.rec.start() # start this thread
 
-        # Another way to do this is to use QTimer() to trigger imgae image readout,
+        # Another way to do this is to use QTimer() to trigger image readout (timer interval can be 0),
         # but in that case, the while loop that waits for the image is running in the main thread,
-        # so it will block the main thread.
+        # and blocks the main thread.
 
+    # force to stop image taking
     def stop(self):
         if self.active:
             self.active = False
             self.control_mode = None
             self.enable_widgets(True)
 
+    # function that will be called in every experimental cycle to update GUI display
     @PyQt5.QtCore.pyqtSlot(dict)
     def img_ctrl_update(self, img_dict):
         if img_dict["type"] == "background":
             img = img_dict["image"]
+            # update background image
             self.parent.image_win.imgs_dict["Background"].setImage(img)
 
         elif img_dict["type"] == "signal":
+            # update signal images
             img = img_dict["image"]
             self.parent.image_win.imgs_dict["Signal"].setImage(img)
             img = img_dict["image_bgsub"]
@@ -704,14 +772,17 @@ class Control(Scrollarea):
                     x = np.append(x, float(param))
                     y = np.append(y, np.mean(cc_list))
                     err = np.append(err, np.std(cc_list)/np.sqrt(len(cc_list)))
+                # sort data in order of value of the scan parameter
                 order = x.argsort()
                 x = x[order]
                 y = y[order]
                 err = err[order]
+                # update "camera count vs scan parameter" plot
                 self.parent.image_win.scan_plot_curve.setData(x, y, symbol='o')
                 self.parent.image_win.scan_plot_errbar.setData(x=x, y=y, top=err, bottom=err, beam=(x[-1]-x[0])/len(x)*0.2, pen=pg.mkPen('w', width=1.2))
 
             if self.gaussian_fit:
+                # do 2D gaussian fit and update GUI displays
                 param = gaussianfit(img_dict["image_bgsub_chop"])
                 self.amp.setText("{:.2f}".format(param["amp"]))
                 self.offset.setText("{:.2f}".format(param["offset"]))
@@ -721,6 +792,9 @@ class Control(Scrollarea):
                 self.y_stand_dev.setText("{:.2f}".format(param["y_width"]))
 
             if self.img_save:
+                # save imagees to local hdf file
+                # in "record" mode, all images are save in the same group
+                # in "scan" mode, images of the same value of scan parameter are saved in the same group
                 with h5py.File(self.hdf_filename, "r+") as hdf_file:
                     root = hdf_file.require_group(self.hdf_group_name)
                     if self.control_mode == "scan":
@@ -747,6 +821,7 @@ class Control(Scrollarea):
                             dset.attrs["2D gaussian fit"+key] = val
 
     def enable_widgets(self, arg):
+        # enable/disable controls
         self.stop_bt.setEnabled(not arg)
         self.record_bt.setEnabled(arg)
         self.scan_bt.setEnabled(arg)
@@ -760,11 +835,13 @@ class Control(Scrollarea):
         self.cam_ctrl_box.setEnabled(arg)
         self.save_load_box.setEnabled(arg)
 
+        # enable/disable in image ROI selection
         for key, roi in self.parent.image_win.img_roi_dict.items():
             roi.setEnabled(arg)
         self.parent.image_win.x_plot_lr.setMovable(arg)
         self.parent.image_win.y_plot_lr.setMovable(arg)
 
+        # force GUI to respond now
         self.parent.app.processEvents()
 
     def set_num_img(self, val):
@@ -782,15 +859,16 @@ class Control(Scrollarea):
 
         self.roi[text] = val
 
+        # set in image ROI selection boxes position/size
         x_range = self.roi["xmax"]-self.roi["xmin"]
         y_range = self.roi["ymax"]-self.roi["ymin"]
         for key, roi in self.parent.image_win.img_roi_dict.items():
             roi.setPos(pos=(self.roi["xmin"], self.roi["ymin"]))
             roi.setSize(size=(x_range, y_range))
-
         self.parent.image_win.x_plot_lr.setRegion((self.roi["xmin"], self.roi["xmax"]))
         self.parent.image_win.y_plot_lr.setRegion((self.roi["ymin"], self.roi["ymax"]))
 
+        # disable 2D gaussian fit if ROI is too larges
         if x_range*y_range > self.cpu_limit:
             if self.gauss_fit_chb.isEnabled():
                 self.gauss_fit_chb.setChecked(False)
@@ -806,6 +884,7 @@ class Control(Scrollarea):
         self.img_save = state
 
     def set_sensor_format(self, val):
+        # set bounds for ROI spinboxes
         format_str = val + " absolute_"
         x_max = (self.parent.defaults["sensor_format"].getint(format_str+"xmax"))/self.parent.device.binning["horizontal"]
         self.x_max_sb.setMaximum(int(x_max))
@@ -816,6 +895,7 @@ class Control(Scrollarea):
         self.parent.device.set_sensor_format(val)
         self.parent.device.set_image_shape()
 
+        # set boundaries for in image ROI selections
         for key, roi in self.parent.image_win.img_roi_dict.items():
             roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
@@ -830,6 +910,7 @@ class Control(Scrollarea):
             logging.warning("Exposure time invalid!")
             return
 
+        # exposure time sanity check
         expo_decimals = self.parent.defaults["expo_time"].getint("decimals")
         expo_min = self.parent.defaults["expo_time"].getfloat("min")
         expo_max = self.parent.defaults["expo_time"].getfloat("max")
@@ -839,6 +920,7 @@ class Control(Scrollarea):
         elif expo_time_round > expo_max:
             expo_time_round = expo_max
 
+        # return and display the formated exposure time in the original QLineEdit
         d = int(expo_decimals+np.log10(unit_num))
         if d:
             t = round(expo_time_round/unit_num, d)
@@ -850,6 +932,7 @@ class Control(Scrollarea):
         self.parent.device.set_expo_time(expo_time_round)
 
     def set_binning(self, text, bin_h, bin_v):
+        # set bounds for ROI spinboxes
         format_str = self.parent.device.sensor_format + " absolute_"
         if text == "hori":
             x_max = (self.parent.defaults["sensor_format"].getint(format_str+"xmax"))/int(bin_h)
@@ -863,12 +946,14 @@ class Control(Scrollarea):
         self.parent.device.set_binning(bin_h, bin_v)
         self.parent.device.set_image_shape()
 
+        # set boundaries for in image ROI selections
         for key, roi in self.parent.image_win.img_roi_dict.items():
             roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
         self.parent.image_win.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
 
     def save_settings(self):
+        # compile file name
         file_name = ""
         if self.file_name_le.text():
             file_name += self.file_name_le.text()
@@ -878,6 +963,8 @@ class Control(Scrollarea):
             file_name += time.strftime("%Y%m%d_%H%M%S")
         file_name += ".ini"
         file_name = r"saved_settings/"+file_name
+
+        # check if the file name already exists
         if os.path.exists(file_name):
             overwrite = qt.QMessageBox.warning(self, 'File name exists',
                                             'File name already exists. Continue to overwrite it?',
@@ -916,6 +1003,7 @@ class Control(Scrollarea):
         configfile.close()
 
     def load_settings(self):
+        # open a file dialog to choose a configuration file to load
         file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
         if not file_name:
             return
@@ -936,7 +1024,7 @@ class Control(Scrollarea):
 
         self.sensor_format_cb.setCurrentText(config["camera_control"]["sensor_format"])
         # the combobox emits 'currentTextChanged' signal, and its connected function will be called
-        # make sure sensor format is updated after image range settings
+
         self.clock_rate_cb.setCurrentText(config["camera_control"]["clock_rate"])
         self.conv_factor_cb.setCurrentText(config["camera_control"]["conversion_factor"])
         for i in self.trig_mode_rblist:
@@ -944,13 +1032,14 @@ class Control(Scrollarea):
                 i.setChecked(True)
                 break
         self.expo_le.setText(config["camera_control"]["exposure_time"])
-        # QLineEdit won't emit 'editingfinishede signal
+        # QLineEdit won't emit 'editingfinished' signal if its text is change programmtically
         self.expo_unit_cb.setCurrentText(config["camera_control"]["exposure_unit"])
         # make sure exposure unit is updated after exposure time QLineEdit, so the pixelfly.set_expo_time functioni will be called
         self.bin_hori_cb.setCurrentText(config["camera_control"].get("binning_horizontal"))
         self.bin_vert_cb.setCurrentText(config["camera_control"].get("binning_vertical"))
-        # make sure binning is updated after image range settings
 
+
+# the class that places images and plots
 class ImageWin(Scrollarea):
     def __init__(self, parent):
         super().__init__(parent, label="Images", type="grid")
@@ -964,11 +1053,13 @@ class ImageWin(Scrollarea):
         self.img_roi_dict ={}
         self.imgs_name = ["Background", "Signal", "Signal w/ bg subtraction"]
 
+        # place images and plots
         self.place_sgn_imgs()
         self.place_axis_plots()
         self.place_ave_image()
         self.place_scan_plot()
 
+    # place background and signal images
     def place_sgn_imgs(self):
         self.img_tab = qt.QTabWidget()
         self.frame.addWidget(self.img_tab, 0, 0, 2, 1)
@@ -979,6 +1070,7 @@ class ImageWin(Scrollarea):
             img = pg.ImageItem(lockAspect=True)
             plot.addItem(img)
 
+            # place in-image ROI selection
             img_roi = new_RectROI(pos = [self.parent.defaults["roi"].getint("xmin"),
                                          self.parent.defaults["roi"].getint("ymin")],
                                   size = [self.parent.defaults["roi"].getint("xmax")-self.parent.defaults["roi"].getint("xmin"),
@@ -988,6 +1080,8 @@ class ImageWin(Scrollarea):
                                   translateSnap = False,
                                   pen = "r")
                                   # params ([x_start, y_start], [x_span, y_span])
+
+            # add ROI scale handlers
             img_roi.addScaleHandle([0, 0], [1, 1])
             # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
             img_roi.addScaleHandle([0, 0.5], [1, 0.5])
@@ -996,9 +1090,12 @@ class ImageWin(Scrollarea):
             img_roi.addScaleHandle([0.5, 1], [0.5, 0])
             plot.addItem(img_roi)
             img_roi.sigRegionChanged.connect(lambda roi=img_roi: self.img_roi_update(roi))
+
+            # set ROI bounds
             img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
             self.img_roi_dict[name] = img_roi
 
+            # add histogram/colorbar
             hist = pg.HistogramLUTItem()
             hist.setImageItem(img)
             graphlayout.addItem(hist)
@@ -1011,9 +1108,11 @@ class ImageWin(Scrollarea):
 
         self.img_tab.setCurrentIndex(2) # make tab #2 (count from 0) to show as default
 
+    # place plots of camera_count along one axis
     def place_axis_plots(self):
         tickstyle = {"showValues": False}
 
+        # place plot of camera_count along x axis
         x_data = np.sum(self.data, axis=1)
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
         self.frame.addWidget(graphlayout, 0, 1, 2, 1)
@@ -1026,6 +1125,8 @@ class ImageWin(Scrollarea):
         # x_plot.getAxis("right").setTicks([])
         x_plot.getAxis("right").setStyle(**tickstyle)
         self.x_plot_curve = x_plot.plot(x_data)
+
+        # add ROI selection
         self.x_plot_lr = pg.LinearRegionItem([self.parent.defaults["roi"].getint("xmin"),
                                                 self.parent.defaults["roi"].getint("xmax")], swapMode="block")
         # no "snap" option for LinearRegion item?
@@ -1034,6 +1135,8 @@ class ImageWin(Scrollarea):
         self.x_plot_lr.sigRegionChanged.connect(self.x_plot_lr_update)
 
         graphlayout.nextRow()
+
+        # place plot of camera_count along y axis
         y_data = np.sum(self.data, axis=0)
         y_plot = graphlayout.addPlot(title="Camera count v.s. Y")
         y_plot.showGrid(True, True)
@@ -1042,18 +1145,23 @@ class ImageWin(Scrollarea):
         y_plot.setLabel("right")
         y_plot.getAxis("right").setStyle(**tickstyle)
         self.y_plot_curve = y_plot.plot(y_data)
+
+        # add ROI selection
         self.y_plot_lr = pg.LinearRegionItem([self.parent.defaults["roi"].getint("ymin"),
                                                 self.parent.defaults["roi"].getint("ymax")], swapMode="block")
         self.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
         y_plot.addItem(self.y_plot_lr)
         self.y_plot_lr.sigRegionChanged.connect(self.y_plot_lr_update)
 
+    # place averaged image
     def place_ave_image(self):
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
         self.frame.addWidget(graphlayout, 2, 0)
         plot = graphlayout.addPlot(title="Average image")
         self.ave_img = pg.ImageItem()
         plot.addItem(self.ave_img)
+
+        # add a histogram/colorbar
         hist = pg.HistogramLUTItem()
         hist.setImageItem(self.ave_img)
         graphlayout.addItem(hist)
@@ -1061,6 +1169,7 @@ class ImageWin(Scrollarea):
 
         self.ave_img.setImage(fake_data(self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
 
+    # place scan plots
     def place_scan_plot(self):
         tickstyle = {"showValues": False}
 
@@ -1074,10 +1183,14 @@ class ImageWin(Scrollarea):
         self.scan_plot_widget.setLabel("bottom", "Scan parameter", **fontstyle)
         self.scan_plot_widget.getAxis("bottom").enableAutoSIPrefix(False)
         self.scan_plot_curve = self.scan_plot_widget.plot()
+
+        # place error bar
         self.scan_plot_errbar = pg.ErrorBarItem()
         self.scan_plot_widget.addItem(self.scan_plot_errbar)
+
         self.frame.addWidget(self.scan_plot_widget, 2, 1)
 
+    # set ROI in background/signal imgaes
     def img_roi_update(self, roi):
         x_min = roi.pos()[0]
         y_min = roi.pos()[1]
@@ -1089,6 +1202,7 @@ class ImageWin(Scrollarea):
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
 
+    # set ROI in the plot of camera count along x-axis
     def x_plot_lr_update(self):
         x_min = self.x_plot_lr.getRegion()[0]
         x_max = self.x_plot_lr.getRegion()[1]
@@ -1096,6 +1210,7 @@ class ImageWin(Scrollarea):
         self.parent.control.x_min_sb.setValue(round(x_min))
         self.parent.control.x_max_sb.setValue(round(x_max))
 
+    # set ROI in the plot of camera count along y-axis
     def y_plot_lr_update(self):
         y_min = self.y_plot_lr.getRegion()[0]
         y_max = self.y_plot_lr.getRegion()[1]
@@ -1104,6 +1219,7 @@ class ImageWin(Scrollarea):
         self.parent.control.y_max_sb.setValue(round(y_max))
 
 
+# main class, parent of other classes
 class CameraGUI(qt.QMainWindow):
     def __init__(self, app):
         super().__init__()
@@ -1112,9 +1228,11 @@ class CameraGUI(qt.QMainWindow):
         # self.setStyleSheet("QToolTip{background-color: black; color: white; font: 10pt;}")
         self.app = app
 
+        # read default settings from a local .ini file
         self.defaults = configparser.ConfigParser()
         self.defaults.read('defaults.ini')
 
+        # instantiate other classes
         self.device = pixelfly(self)
         self.control = Control(self)
         self.image_win = ImageWin(self)
@@ -1134,5 +1252,6 @@ if __name__ == '__main__':
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     main_window = CameraGUI(app)
     app.exec_()
+    # make sure the camera is closed after the program exits
     main_window.device.cam.close()
     sys.exit(0)
