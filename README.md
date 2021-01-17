@@ -7,7 +7,8 @@ Key features include:
 - real time image display
 - region of interest (ROI) selection
 - real time image statistics (including 2D Gaussian fit)
-- target system parameter scan (in coordinate with other devices) 
+- target system parameter scan (in coordinate with other programs/devices)
+- socket network communication (as server)
 - save and load program settings
 
 
@@ -40,6 +41,10 @@ Default settings, legitimate choices and some camera specifications are listed i
   - Camera configurations can be set in this section. Only some common settings are implemented now.
   - A sanity check of exposure time setting is included at the backend.
   - Changing sensor format or binning can change image size, as well as the absolute limit of ROI.
+
+
+- TCP Control
+	- Other programs can send data to this program through network. For now the received data is interpreted as scan sequence.
 
 
 - Save/Load Settigns
