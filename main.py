@@ -16,6 +16,9 @@ import PyQt5.QtWidgets as qt
 import os
 import pco
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
+import socket
+import selectors
+import struct
 
 
 # steal colormap data from matplotlib
@@ -85,6 +88,65 @@ def gaussianfit(data):
 
     return p_dict
 
+# a spinbox that won't respond if the mouse just hovers over it and scrolls the wheel,
+# it will respond if it's clicked and gets focus
+# the purpose is to avoid accidental value change
+class newSpinBox(qt.QSpinBox):
+    def __init__(self, range=None, stepsize=None, suffix=None):
+        super().__init__()
+        # mouse hovering over this widget and scrolling the wheel won't bring focus into it
+        # mouse can bring focus to this widget by clicking it
+        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+        # 0 != None
+        # don't use "if not range:" statement, in case range is set to zero
+        if range != None:
+            self.setRange(range[0], range[1])
+        if stepsize != None:
+            self.setSingleStep(stepsize)
+        if suffix != None:
+            self.setSuffix(suffix)
+
+    # modify wheelEvent so this widget only responds when it has focus
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            # if the event is ignored, it will be passed to and handled by parent widget
+            event.ignore()
+
+# modify QDoubleSpinBox for the same reason as modifying QSpinBox, see comments for newSpinBox class
+class newDoubleSpinBox(qt.QDoubleSpinBox):
+    def __init__(self, range=None, decimal=None, stepsize=None, suffix=None):
+        super().__init__()
+        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+
+        if range != None:
+            self.setRange(range[0], range[1])
+        if decimal != None:
+            self.setDecimals(decimal)
+        if stepsize != None:
+            self.setSingleStep(stepsize)
+        if suffix != None:
+            self.setSuffix(suffix)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+# modify QComboBox for the same reason as modifying QSpinBox, see comments for newSpinBox class
+class newComboBox(qt.QComboBox):
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
 # create a scroll area of a specific layout, e.g. form, grid, vbox, etc
 class Scrollarea(qt.QGroupBox):
     def __init__(self, parent, label="", type="grid"):
@@ -117,7 +179,7 @@ class Scrollarea(qt.QGroupBox):
         box.setLayout(self.frame)
 
 # subclass the pyqtgraph rectangular ROI class so we can disable/modify some of its properties
-class new_RectROI(pg.RectROI):
+class newRectROI(pg.RectROI):
     # see https://pyqtgraph.readthedocs.io/en/latest/graphicsItems/roi.html#pyqtgraph.ROI.checkPointMove
     def __init__(self, pos, size, centered=False, sideScalers=False, **args):
         super().__init__(pos, size, centered=False, sideScalers=False, **args)
@@ -137,6 +199,84 @@ class new_RectROI(pg.RectROI):
 
     def checkPointMove(self, handle, pos, modifiers):
         return self.resizable
+
+# this thread handles TCP communication with another PC, it starts when this program starts
+# code is from https://github.com/qw372/Digital-transfer-cavity-laser-lock/blob/8db28c2edd13c2c474d68c4b45c8f322f94f909d/main.py#L1385
+class TcpThread(PyQt5.QtCore.QThread):
+    signal = PyQt5.QtCore.pyqtSignal(dict)
+
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.data = bytes()
+        self.length_get = False
+        self.host = self.parent.defaults["tcp_connection"]["host_addr"]
+        self.port = self.parent.defaults["tcp_connection"].getint("port")
+        self.sel = selectors.DefaultSelector()
+
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Avoid bind() exception: OSError: [Errno 48] Address already in use
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind((self.host, self.port))
+        self.server_sock.listen()
+        print("listening on", (self.host, self.port))
+        self.server_sock.setblocking(False)
+        self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
+
+    def run(self):
+        while self.parent.control.tcp_active:
+            events = self.sel.select(timeout=0.1)
+            for key, mask in events:
+                if key.data is None:
+                    # this event is from self.server_sock listening
+                    self.accept_wrapper(key.fileobj)
+                else:
+                    s = key.fileobj
+                    try:
+                        data = s.recv(1024) # 1024 bytes should be enough for our data
+                    except Exception as err:
+                        print(f"TCP connection error: \n{err}")
+                        continue
+                    if data:
+                        self.data += data
+                        while len(self.data) > 0:
+                            if (not self.length_get) and len(self.data) >= 4:
+                                self.length = struct.unpack(">I", self.data[:4])[0]
+                                self.length_get = True
+                                self.data = self.data[4:]
+                            elif self.length_get and len(self.data) >= self.length:
+                                message = self.data.decode('utf-8')
+                                # print(message)
+                                with open("scan_sequence\latest_sequence.ini", "w") as f:
+                                    f.write(message)
+                                t = time.time()
+                                time_string = time.strftime("%Y-%m-%d  %H:%M:%S.", time.localtime(t))
+                                time_string += "{:1.0f}".format((t%1)*10)
+                                return_dict = {"last write": time_string}
+                                self.signal.emit(return_dict)
+                                self.data = self.data[self.length:]
+                                self.length_get = False
+                            else:
+                                break
+                    else:
+                        # empty data will be interpreted as the signal of client shutting down
+                        print("client shutting down...")
+                        self.sel.unregister(s)
+                        s.close()
+                        self.length_get = False
+                        self.data = bytes()
+
+        self.sel.unregister(self.server_sock)
+        self.server_sock.close()
+        self.sel.close()
+
+    def accept_wrapper(self, sock):
+        conn, addr = sock.accept()  # Should be ready to read
+        print("accepted connection from", addr)
+        conn.setblocking(False)
+        self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
+        return_dict = {"client addr": addr}
+        self.signal.emit(return_dict)
 
 # the thread called when the program starts to interface with camera and take images
 # this thread waits unitl a new image is available and read it out from the camera
@@ -239,7 +379,6 @@ class CamThread(PyQt5.QtCore.QThread):
         # stop the camera after taking required number of images.
         self.parent.device.cam.stop()
 
-
 # the class that handles camera interface (except taking images) and configuration
 class pixelfly:
     def __init__(self, parent):
@@ -306,7 +445,6 @@ class pixelfly:
         self.image_shape = {"xmax": int(self.parent.defaults["sensor_format"].getint(format_str+"xmax")/self.binning["horizontal"]),
                             "ymax": int(self.parent.defaults["sensor_format"].getint(format_str+"ymax")/self.binning["vertical"])}
 
-
 # the class that places elements in UI and handles data processing
 class Control(Scrollarea):
     def __init__(self, parent):
@@ -339,11 +477,16 @@ class Control(Scrollarea):
         # control mode, can be "record" or "scan" in current implementation
         self.control_mode = None
 
+        # boolean variable, turned on when the TCP thread is started
+        self.tcp_active = False
+
         # places GUI elements
         self.place_recording()
         self.place_image_control()
         self.place_cam_control()
+        self.place_tcp_control()
         self.place_save_load()
+        self.tcp_start()
 
     # place recording gui elements
     def place_recording(self):
@@ -376,7 +519,7 @@ class Control(Scrollarea):
         record_frame.addWidget(self.camera_count, 1, 1, 1, 2)
 
         # display mean of camera count in real time in "record" mode
-        record_frame.addWidget(qt.QLabel("Cam. mean:"), 2, 0, 1, 1)
+        record_frame.addWidget(qt.QLabel("Camera mean:"), 2, 0, 1, 1)
         self.camera_count_mean = qt.QLabel()
         self.camera_count_mean.setText("0")
         self.camera_count_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
@@ -384,7 +527,7 @@ class Control(Scrollarea):
         record_frame.addWidget(self.camera_count_mean, 2, 1, 1, 2)
 
         # display error of mean of camera count in real time in "record" mode
-        record_frame.addWidget(qt.QLabel("Cam. error:"), 3, 0, 1, 1)
+        record_frame.addWidget(qt.QLabel("Camera error:"), 3, 0, 1, 1)
         self.camera_count_err_mean = qt.QLabel()
         self.camera_count_err_mean.setText("0")
         self.camera_count_err_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
@@ -400,19 +543,16 @@ class Control(Scrollarea):
         self.frame.addWidget(img_ctrl_box)
 
         # a spinbox to set number of images to take in next run
-        self.num_img_to_take_sb = qt.QSpinBox()
         num_img_upperlimit = self.parent.defaults["image_number"].getint("max")
-        self.num_img_to_take_sb.setRange(1, num_img_upperlimit)
+        self.num_img_to_take_sb = newSpinBox(range=(1, num_img_upperlimit), stepsize=1, suffix=None)
         self.num_img_to_take_sb.setValue(self.num_img_to_take)
         self.num_img_to_take_sb.valueChanged[int].connect(lambda val: self.set_num_img(val))
         img_ctrl_frame.addRow("Num of image to take:", self.num_img_to_take_sb)
 
         # spinboxes to set image region of interest in x
-        self.x_min_sb = qt.QSpinBox()
-        self.x_min_sb.setRange(0, self.roi["xmax"]-1)
+        self.x_min_sb = newSpinBox(range=(0, self.roi["xmax"]-1), stepsize=1, suffix=None)
         self.x_min_sb.setValue(self.roi["xmin"])
-        self.x_max_sb = qt.QSpinBox()
-        self.x_max_sb.setRange(self.roi["xmin"]+1, self.parent.device.image_shape["xmax"])
+        self.x_max_sb = newSpinBox(range=(self.roi["xmin"]+1, self.parent.device.image_shape["xmax"]), stepsize=1, suffix=None)
         self.x_max_sb.setValue(self.roi["xmax"])
         self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
                                                 self.set_roi(text, val, sb))
@@ -428,11 +568,9 @@ class Control(Scrollarea):
         img_ctrl_frame.addRow("ROI X range:", x_range_box)
 
         # spinboxes to set image region of interest in y
-        self.y_min_sb = qt.QSpinBox()
-        self.y_min_sb.setRange(0, self.roi["ymax"]-1)
+        self.y_min_sb = newSpinBox(range=(0, self.roi["ymax"]-1), stepsize=1, suffix=None)
         self.y_min_sb.setValue(self.roi["ymin"])
-        self.y_max_sb = qt.QSpinBox()
-        self.y_max_sb.setRange(self.roi["ymin"]+1, self.parent.device.image_shape["ymax"])
+        self.y_max_sb = newSpinBox(range=(self.roi["ymin"]+1, self.parent.device.image_shape["ymax"]), stepsize=1, suffix=None)
         self.y_max_sb.setValue(self.roi["ymax"])
         self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
                                                 self.set_roi(text, val, sb))
@@ -547,7 +685,7 @@ class Control(Scrollarea):
         self.frame.addWidget(self.cam_ctrl_box)
 
         # set sensor format
-        self.sensor_format_cb = qt.QComboBox()
+        self.sensor_format_cb = newComboBox()
         self.sensor_format_cb.setMaximumWidth(200)
         self.sensor_format_cb.setMaximumHeight(20)
         op = [x.strip() for x in self.parent.defaults["sensor_format"]["options"].split(',')]
@@ -558,7 +696,7 @@ class Control(Scrollarea):
         cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
         # set clock rate
-        self.clock_rate_cb = qt.QComboBox()
+        self.clock_rate_cb = newComboBox()
         self.clock_rate_cb.setMaximumWidth(200)
         self.clock_rate_cb.setMaximumHeight(20)
         op = [x.strip() for x in self.parent.defaults["clock_rate"]["options"].split(',')]
@@ -570,7 +708,7 @@ class Control(Scrollarea):
         cam_ctrl_frame.addRow("Clock rate:", self.clock_rate_cb)
 
         # set conversion factor
-        self.conv_factor_cb = qt.QComboBox()
+        self.conv_factor_cb = newComboBox()
         self.conv_factor_cb.setMaximumWidth(200)
         self.conv_factor_cb.setMaximumHeight(20)
         self.conv_factor_cb.setToolTip("1/gain, or electrons/count")
@@ -601,33 +739,33 @@ class Control(Scrollarea):
         cam_ctrl_frame.addRow("Trigger mode:", self.trig_box)
 
         # set exposure time and unit
-        self.expo_le = qt.QLineEdit() # try qt.QDoubleSpinBox() ?
-        default = self.parent.defaults["expo_time"].getfloat("default")
+        expo_cf = self.parent.defaults["expo_time"]
         default_unit = self.parent.defaults["expo_unit"]["default"]
         default_unit_num = self.parent.defaults["expo_unit"].getfloat(default_unit)
-        default_time = str(default/default_unit_num)
-        self.expo_le.setText(default_time)
-        self.expo_unit_cb = qt.QComboBox()
+        default_time = expo_cf.getfloat("default")/default_unit_num
+        self.expo_dsb = newDoubleSpinBox(range=(expo_cf.getfloat("min")/default_unit_num, expo_cf.getfloat("max")/default_unit_num), decimal=int(expo_cf.getint("decimals")+np.log10(default_unit_num)), stepsize=1)
+        self.expo_dsb.setValue(default_time)
+        self.expo_unit_cb = newComboBox()
         self.expo_unit_cb.setMaximumHeight(30)
         op = [x.strip() for x in self.parent.defaults["expo_unit"]["options"].split(',')]
         for i in op:
             self.expo_unit_cb.addItem(i)
         self.expo_unit_cb.setCurrentText(default_unit)
-        self.expo_le.editingFinished.connect(lambda le=self.expo_le, cb=self.expo_unit_cb:
-                                            self.set_expo_time(le.text(), cb.currentText()))
-        self.expo_unit_cb.currentTextChanged[str].connect(lambda val, le=self.expo_le: self.set_expo_time(le.text(), val))
+        self.expo_dsb.valueChanged[float].connect(lambda val, cb=self.expo_unit_cb, type="time":
+                                            self.set_expo_time(val, cb.currentText(), type))
+        self.expo_unit_cb.currentTextChanged[str].connect(lambda val, dsb=self.expo_dsb, type="unit": self.set_expo_time(dsb.value(), val, type))
         expo_box = qt.QWidget()
         expo_box.setMaximumWidth(200)
         expo_layout = qt.QHBoxLayout()
         expo_layout.setContentsMargins(0,0,0,0)
         expo_box.setLayout(expo_layout)
-        expo_layout.addWidget(self.expo_le)
+        expo_layout.addWidget(self.expo_dsb)
         expo_layout.addWidget(self.expo_unit_cb)
         cam_ctrl_frame.addRow("Exposure time:", expo_box)
 
         # set binning
-        self.bin_hori_cb = qt.QComboBox()
-        self.bin_vert_cb = qt.QComboBox()
+        self.bin_hori_cb = newComboBox()
+        self.bin_vert_cb = newComboBox()
         op = [x.strip() for x in self.parent.defaults["binning"]["options"].split(',')]
         for i in op:
             self.bin_hori_cb.addItem(i)
@@ -644,6 +782,33 @@ class Control(Scrollarea):
         bin_layout.addWidget(self.bin_hori_cb)
         bin_layout.addWidget(self.bin_vert_cb)
         cam_ctrl_frame.addRow("Binning H x V:", bin_box)
+
+    # place gui elements related to TCP connection
+    def place_tcp_control(self):
+        tcp_ctrl_box = qt.QGroupBox("TCP Control")
+        tcp_ctrl_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
+        tcp_ctrl_frame = qt.QFormLayout()
+        tcp_ctrl_box.setLayout(tcp_ctrl_frame)
+        self.frame.addWidget(tcp_ctrl_box)
+
+        server_host = self.parent.defaults["tcp_connection"]["host_addr"]
+        server_port = self.parent.defaults["tcp_connection"]["port"]
+        self.server_addr_la = qt.QLabel(server_host+" ("+server_port+")")
+        self.server_addr_la.setStyleSheet("QLabel{background-color: gray;}")
+        self.server_addr_la.setToolTip("server = this PC")
+        tcp_ctrl_frame.addRow("Server/This PC address:", self.server_addr_la)
+
+        self.client_addr_la = qt.QLabel("No connection")
+        self.client_addr_la.setStyleSheet("QLabel{background-color: gray;}")
+        tcp_ctrl_frame.addRow("Last client address:", self.client_addr_la)
+
+        self.last_write_la = qt.QLabel("No connection")
+        self.last_write_la.setStyleSheet("QLabel{background-color: gray;}")
+        tcp_ctrl_frame.addRow("Last connection time:", self.last_write_la)
+
+        self.restart_tcp_bt = qt.QPushButton("Restart Connection")
+        self.restart_tcp_bt.clicked[bool].connect(lambda val: self.restart_tcp())
+        tcp_ctrl_frame.addRow("Restart:", self.restart_tcp_bt)
 
     # place save/load program configuration gui elements
     def place_save_load(self):
@@ -738,6 +903,10 @@ class Control(Scrollarea):
     def stop(self):
         if self.active:
             self.active = False
+            try:
+                self.rec.wait() #  wait until thread closed
+            except AttributeError:
+                pass
             self.control_mode = None
             self.enable_widgets(True)
 
@@ -901,35 +1070,24 @@ class Control(Scrollarea):
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
         self.parent.image_win.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
 
-    def set_expo_time(self, time, unit):
+    def set_expo_time(self, time, unit, change_type):
         unit_num = self.parent.defaults["expo_unit"].getfloat(unit)
-        try:
-            expo_time = float(time)*unit_num
-        except ValueError as err:
-            logging.warning(traceback.format_exc())
-            logging.warning("Exposure time invalid!")
+        min = self.parent.defaults["expo_time"].getfloat("min")
+        max = self.parent.defaults["expo_time"].getfloat("max")
+        d = self.parent.defaults["expo_time"].getint("decimals")
+        if change_type == "unit":
+            self.expo_dsb.setRange(min/unit_num, max/unit_num)
+            self.expo_dsb.setDecimals(int(d+np.log10(unit_num)))
+        elif change_type == "time":
+            pass
+        else:
+            print("set_expo_time: invalid change_type")
             return
 
-        # exposure time sanity check
-        expo_decimals = self.parent.defaults["expo_time"].getint("decimals")
-        expo_min = self.parent.defaults["expo_time"].getfloat("min")
-        expo_max = self.parent.defaults["expo_time"].getfloat("max")
-        expo_time_round = round(expo_time, expo_decimals)
-        if expo_time_round < expo_min:
-            expo_time_round = expo_min
-        elif expo_time_round > expo_max:
-            expo_time_round = expo_max
-
-        # return and display the formated exposure time in the original QLineEdit
-        d = int(expo_decimals+np.log10(unit_num))
-        if d:
-            t = round(expo_time_round/unit_num, d)
-            t = f"{t}"
-        else:
-            t = "{:d}".format(round(expo_time_round/unit_num))
-
-        self.expo_le.setText(t)
-        self.parent.device.set_expo_time(expo_time_round)
+        t = time*unit_num
+        t = t if t >= min else min
+        t = t if t <= max else max
+        self.parent.device.set_expo_time(t)
 
     def set_binning(self, text, bin_h, bin_v):
         # set bounds for ROI spinboxes
@@ -951,6 +1109,33 @@ class Control(Scrollarea):
             roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
         self.parent.image_win.x_plot_lr.setBounds([0, self.parent.device.image_shape["xmax"]])
         self.parent.image_win.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
+
+    def tcp_start(self):
+        self.tcp_active = True
+        self.tcp_thread = TcpThread(self.parent)
+        self.tcp_thread.signal.connect(self.tcp_widgets_update)
+        self.tcp_thread.start()
+
+    def tcp_stop(self):
+        self.tcp_active = False
+        try:
+            self.tcp_thread.wait() # wait until closed
+        except AttributeError as err:
+            pass
+
+    def restart_tcp(self):
+        self.tcp_stop()
+        self.tcp_start()
+
+    @PyQt5.QtCore.pyqtSlot(dict)
+    def tcp_widgets_update(self, dict):
+        t = dict.get("last write")
+        if t:
+            self.last_write_la.setText(t)
+
+        addr = dict.get("client addr")
+        if addr:
+            self.client_addr_la.setText(dict["client addr"][0]+" ("+str(dict["client addr"][1])+")")
 
     def save_settings(self):
         # compile file name
@@ -993,10 +1178,12 @@ class Control(Scrollarea):
                 t = i.text()
                 break
         config["camera_control"]["trigger_mode"] = t
-        config["camera_control"]["exposure_time"] = self.expo_le.text()
+        config["camera_control"]["exposure_time"] = str(self.expo_dsb.value())
         config["camera_control"]["exposure_unit"] = self.expo_unit_cb.currentText()
         config["camera_control"]["binning_horizontal"] = self.bin_hori_cb.currentText()
         config["camera_control"]["binning_vertical"] = self.bin_vert_cb.currentText()
+
+        config["tcp_control"] = self.parent.defaults["tcp_connection"]
 
         configfile = open(file_name, "w")
         config.write(configfile)
@@ -1031,13 +1218,20 @@ class Control(Scrollarea):
             if i.text() == config["camera_control"]["trigger_mode"]:
                 i.setChecked(True)
                 break
-        self.expo_le.setText(config["camera_control"]["exposure_time"])
-        # QLineEdit won't emit 'editingfinished' signal if its text is change programmtically
+
+        # make sure expo_unit_cb changes before time, because it changes expo_dsb range
         self.expo_unit_cb.setCurrentText(config["camera_control"]["exposure_unit"])
-        # make sure exposure unit is updated after exposure time QLineEdit, so the pixelfly.set_expo_time functioni will be called
+        self.expo_dsb.setValue(config["camera_control"].getfloat("exposure_time"))
+
         self.bin_hori_cb.setCurrentText(config["camera_control"].get("binning_horizontal"))
         self.bin_vert_cb.setCurrentText(config["camera_control"].get("binning_vertical"))
 
+        self.tcp_stop()
+        self.parent.defaults["tcp_connection"] = config["tcp_control"]
+        server_host = self.parent.defaults["tcp_connection"]["host_addr"]
+        server_port = self.parent.defaults["tcp_connection"]["port"]
+        self.server_addr_la.setText(server_host+" ("+server_port+")")
+        self.tcp_start()
 
 # the class that places images and plots
 class ImageWin(Scrollarea):
@@ -1071,7 +1265,7 @@ class ImageWin(Scrollarea):
             plot.addItem(img)
 
             # place in-image ROI selection
-            img_roi = new_RectROI(pos = [self.parent.defaults["roi"].getint("xmin"),
+            img_roi = newRectROI(pos = [self.parent.defaults["roi"].getint("xmin"),
                                          self.parent.defaults["roi"].getint("ymin")],
                                   size = [self.parent.defaults["roi"].getint("xmax")-self.parent.defaults["roi"].getint("xmin"),
                                           self.parent.defaults["roi"].getint("ymax")-self.parent.defaults["roi"].getint("ymin")],
@@ -1217,7 +1411,6 @@ class ImageWin(Scrollarea):
 
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
-
 
 # main class, parent of other classes
 class CameraGUI(qt.QMainWindow):
