@@ -981,12 +981,14 @@ class Control(Scrollarea):
                     dset.attrs["region of interest: xmax"] = self.roi["xmax"]
                     dset.attrs["region of interest: ymin"] = self.roi["ymin"]
                     dset.attrs["region of interest: ymax"] = self.roi["ymax"]
+
                     # display as image in HDFView
                     # https://support.hdfgroup.org/HDF5/doc/ADGuide/ImageSpec.html
                     dset.attrs["CLASS"] = np.string_("IMAGE")
                     dset.attrs["IMAGE_VERSION"] = np.string_("1.2")
                     dset.attrs["IMAGE_SUBCLASS"] = np.string_("IMAGE_GRAYSCALE")
                     dset.attrs["IMAGE_WHITE_IS_ZERO"] = 0
+                    
                     if self.gaussian_fit:
                         for key, val in param.items():
                             dset.attrs["2D gaussian fit"+key] = val
