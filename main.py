@@ -456,7 +456,7 @@ class Control(Scrollarea):
         self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit")
 
         # file name of the hdf file we save image to
-        self.hdf_filename = self.parent.defaults["image_save"]["file_name"]
+        self.hdf_filename = self.parent.defaults["image_save"]["file_name"] + "_" + time.strftime("%Y%m%d") + ".hdf"
 
         # number of images to take in each run
         self.num_img_to_take = self.parent.defaults["image_number"].getint("default")
@@ -591,20 +591,6 @@ class Control(Scrollarea):
         self.num_image.setStyleSheet("background-color: gray;")
         img_ctrl_frame.addRow("Num of recorded images:", self.num_image)
 
-        # self.image_width = qt.QLabel()
-        # self.image_width.setText("0")
-        # self.image_width.setStyleSheet("background-color: gray;")
-        # self.image_height = qt.QLabel()
-        # self.image_height.setText("0")
-        # self.image_height.setStyleSheet("background-color: gray;")
-        # image_shape_box = qt.QWidget()
-        # image_shape_layout = qt.QHBoxLayout()
-        # image_shape_layout.setContentsMargins(0,0,0,0)
-        # image_shape_box.setLayout(image_shape_layout)
-        # image_shape_layout.addWidget(self.image_width)
-        # image_shape_layout.addWidget(self.image_height)
-        # img_ctrl_frame.addRow("Image width x height:", image_shape_box)
-
         # set whether to do gaussian fit in real time
         self.gauss_fit_chb = qt.QCheckBox()
         self.gauss_fit_chb.setTristate(False)
@@ -619,13 +605,23 @@ class Control(Scrollarea):
             self.gauss_fit_chb.setChecked(False)
             self.gauss_fit_chb.setEnabled(False)
 
-        # set whether to save image to a local file
+        # set hdf group name and whether to save image to a hdf file
+        self.run_name_le = qt.QLineEdit()
+        default_run_name = self.parent.defaults["image_save"]["run_name"]
+        self.run_name_le.setText(default_run_name)
+        self.run_name_le.setToolTip("HDF group name/run name")
         self.img_save_chb = qt.QCheckBox()
         self.img_save_chb.setTristate(False)
         self.img_save_chb.setChecked(self.img_save)
         self.img_save_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.img_save_chb.stateChanged[int].connect(lambda state: self.set_img_save(state))
-        img_ctrl_frame.addRow("Image auto save:", self.img_save_chb)
+        img_save_box = qt.QWidget()
+        img_save_layout = qt.QHBoxLayout()
+        img_save_layout.setContentsMargins(0,0,0,0)
+        img_save_box.setLayout(img_save_layout)
+        img_save_layout.addWidget(self.run_name_le)
+        img_save_layout.addWidget(self.img_save_chb)
+        img_ctrl_frame.addRow("Image auto save:", img_save_box)
 
         img_ctrl_frame.addRow("------------------", qt.QWidget())
 
@@ -870,7 +866,7 @@ class Control(Scrollarea):
         # initialize a hdf group if image saving is required
         if self.img_save:
             with h5py.File(self.hdf_filename, "a") as hdf_file:
-                self.hdf_group_name = "run_"+time.strftime("%Y%m%d_%H%M%S")
+                self.hdf_group_name = self.run_name_le.text()+"_"+time.strftime("%Y%m%d_%H%M%S")
                 hdf_file.create_group(self.hdf_group_name)
 
         if self.control_mode == "scan":
@@ -985,6 +981,12 @@ class Control(Scrollarea):
                     dset.attrs["region of interest: xmax"] = self.roi["xmax"]
                     dset.attrs["region of interest: ymin"] = self.roi["ymin"]
                     dset.attrs["region of interest: ymax"] = self.roi["ymax"]
+                    # display as image in HDFView
+                    # https://support.hdfgroup.org/HDF5/doc/ADGuide/ImageSpec.html
+                    dset.attrs["CLASS"] = np.string_("IMAGE")
+                    dset.attrs["IMAGE_VERSION"] = np.string_("1.2")
+                    dset.attrs["IMAGE_SUBCLASS"] = np.string_("IMAGE_GRAYSCALE")
+                    dset.attrs["IMAGE_WHITE_IS_ZERO"] = 0
                     if self.gaussian_fit:
                         for key, val in param.items():
                             dset.attrs["2D gaussian fit"+key] = val
@@ -1167,6 +1169,7 @@ class Control(Scrollarea):
         config["image_control"]["ymin"] = str(self.y_min_sb.value())
         config["image_control"]["ymax"] = str(self.y_max_sb.value())
         config["image_control"]["2D_gaussian_fit"] = str(self.gauss_fit_chb.isChecked())
+        config["image_control"]["run_name"] = self.run_name_le.text()
         config["image_control"]["image_auto_save"] = str(self.img_save_chb.isChecked())
 
         config["camera_control"] = {}
@@ -1208,6 +1211,7 @@ class Control(Scrollarea):
         self.gauss_fit_chb.setChecked(config["image_control"].getboolean("2d_gaussian_fit"))
         # the combobox emits 'stateChanged' signal, and its connected function will be called
         self.img_save_chb.setChecked(config["image_control"].getboolean("image_auto_save"))
+        self.run_name_le.setText(config["image_control"].get("run_name"))
 
         self.sensor_format_cb.setCurrentText(config["camera_control"]["sensor_format"])
         # the combobox emits 'currentTextChanged' signal, and its connected function will be called
@@ -1277,6 +1281,8 @@ class ImageWin(Scrollarea):
 
             # add ROI scale handlers
             img_roi.addScaleHandle([0, 0], [1, 1])
+            img_roi.addScaleHandle([1, 0], [0, 1])
+            img_roi.addScaleHandle([0, 1], [1, 0])
             # params ([x, y], [x position scaled around, y position scaled around]), rectangular from 0 to 1
             img_roi.addScaleHandle([0, 0.5], [1, 0.5])
             img_roi.addScaleHandle([1, 0.5], [0, 0.5])
