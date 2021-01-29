@@ -19,6 +19,7 @@ import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 import socket
 import selectors
 import struct
+from collections import deque
 
 
 # steal colormap data from matplotlib
@@ -106,6 +107,10 @@ class newSpinBox(qt.QSpinBox):
         if suffix != None:
             self.setSuffix(suffix)
 
+        # scroll event and up/down button still emit valuechanged signal,
+        # but typing value through keyboard only emits valuecahnged signal when enter is pressed or focus is lost
+        self.setKeyboardTracking(False)
+
     # modify wheelEvent so this widget only responds when it has focus
     def wheelEvent(self, event):
         if self.hasFocus():
@@ -128,6 +133,8 @@ class newDoubleSpinBox(qt.QDoubleSpinBox):
             self.setSingleStep(stepsize)
         if suffix != None:
             self.setSuffix(suffix)
+
+        self.setKeyboardTracking(False)
 
     def wheelEvent(self, event):
         if self.hasFocus():
@@ -343,6 +350,7 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.img_dict["image_bgsub"] = image_bgsub
                     self.img_dict["image_bgsub_chop"] = image_bgsub_chop
                     self.img_dict["camera_count"] = np.format_float_scientific(cc, precision=4)
+                    self.img_dict["camera_count_raw"] = cc
 
                     if self.parent.control.control_mode == "record":
                         # a list to save camera count of every single image
@@ -455,9 +463,6 @@ class Control(Scrollarea):
         # it depends on CPU power and duration of experimental cycle
         self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit")
 
-        # file name of the hdf file we save image to
-        self.hdf_filename = self.parent.defaults["image_save"]["file_name"] + "_" + time.strftime("%Y%m%d") + ".hdf"
-
         # number of images to take in each run
         self.num_img_to_take = self.parent.defaults["image_number"].getint("default")
 
@@ -479,6 +484,9 @@ class Control(Scrollarea):
 
         # boolean variable, turned on when the TCP thread is started
         self.tcp_active = False
+
+        # save camera count
+        self.camera_count_deque = deque([], maxlen=20)
 
         # places GUI elements
         self.place_recording()
@@ -865,6 +873,8 @@ class Control(Scrollarea):
 
         # initialize a hdf group if image saving is required
         if self.img_save:
+            # file name of the hdf file we save image to
+            self.hdf_filename = self.parent.defaults["image_save"]["file_name"] + "_" + time.strftime("%Y%m%d") + ".hdf"
             with h5py.File(self.hdf_filename, "a") as hdf_file:
                 self.hdf_group_name = self.run_name_le.text()+"_"+time.strftime("%Y%m%d_%H%M%S")
                 hdf_file.create_group(self.hdf_group_name)
@@ -881,6 +891,8 @@ class Control(Scrollarea):
             self.scan_device = self.scan_device.split(",")[0].strip()
             self.scan_elem_name = self.scan_device + " [" + self.scan_param_name + "]"
             self.parent.image_win.scan_plot_widget.setLabel("bottom", self.scan_device+": "+self.scan_param_name)
+
+            self.parent.image_win.ave_scan_tab.setCurrentIndex(1) # switch to scan plot tab
 
         # disable and gray out image/camera controls, in case of any accidental parameter change
         self.enable_widgets(False)
@@ -924,6 +936,8 @@ class Control(Scrollarea):
             self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
             self.num_image.setText(str(img_dict["num_image"]))
             self.camera_count.setText(str(img_dict["camera_count"]))
+            self.camera_count_deque.append(img_dict["camera_count_raw"])
+            self.parent.image_win.cc_plot_curve.setData(np.array(self.camera_count_deque), symbol='o')
 
             if self.control_mode == "record":
                 self.parent.image_win.ave_img.setImage(img_dict["image_ave"])
@@ -988,7 +1002,7 @@ class Control(Scrollarea):
                     dset.attrs["IMAGE_VERSION"] = np.string_("1.2")
                     dset.attrs["IMAGE_SUBCLASS"] = np.string_("IMAGE_GRAYSCALE")
                     dset.attrs["IMAGE_WHITE_IS_ZERO"] = 0
-                    
+
                     if self.gaussian_fit:
                         for key, val in param.items():
                             dset.attrs["2D gaussian fit"+key] = val
@@ -1249,6 +1263,7 @@ class ImageWin(Scrollarea):
         self.frame.setRowStretch(0,1)
         self.frame.setRowStretch(1,1)
         self.frame.setRowStretch(2,1)
+        self.frame.setContentsMargins(0,0,0,0)
         self.imgs_dict = {}
         self.img_roi_dict ={}
         self.imgs_name = ["Background", "Signal", "Signal w/ bg subtraction"]
@@ -1256,8 +1271,13 @@ class ImageWin(Scrollarea):
         # place images and plots
         self.place_sgn_imgs()
         self.place_axis_plots()
+
+        self.ave_scan_tab = qt.QTabWidget()
+        self.frame.addWidget(self.ave_scan_tab, 2, 0)
         self.place_ave_image()
         self.place_scan_plot()
+
+        self.place_cc_plot()
 
     # place background and signal images
     def place_sgn_imgs(self):
@@ -1358,7 +1378,7 @@ class ImageWin(Scrollarea):
     # place averaged image
     def place_ave_image(self):
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
-        self.frame.addWidget(graphlayout, 2, 0)
+        self.ave_scan_tab.addTab(graphlayout, " Average Image ")
         plot = graphlayout.addPlot(title="Average image")
         self.ave_img = pg.ImageItem()
         plot.addItem(self.ave_img)
@@ -1390,7 +1410,21 @@ class ImageWin(Scrollarea):
         self.scan_plot_errbar = pg.ErrorBarItem()
         self.scan_plot_widget.addItem(self.scan_plot_errbar)
 
-        self.frame.addWidget(self.scan_plot_widget, 2, 1)
+        self.ave_scan_tab.addTab(self.scan_plot_widget, " Scan Plot ")
+
+    # place a plot showing running camera count
+    def place_cc_plot(self):
+        tickstyle = {"showValues": False}
+
+        self.cc_plot_widget = pg.PlotWidget(title="Camera count")
+        self.cc_plot_widget.showGrid(True, True)
+        self.cc_plot_widget.setLabel("top")
+        self.cc_plot_widget.getAxis("top").setStyle(**tickstyle)
+        self.cc_plot_widget.setLabel("right")
+        self.cc_plot_widget.getAxis("right").setStyle(**tickstyle)
+        self.cc_plot_curve = self.cc_plot_widget.plot()
+
+        self.frame.addWidget(self.cc_plot_widget, 2, 1)
 
     # set ROI in background/signal imgaes
     def img_roi_update(self, roi):
