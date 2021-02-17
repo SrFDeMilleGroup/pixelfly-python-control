@@ -298,10 +298,10 @@ class CamThread(PyQt5.QtCore.QThread):
         self.counter = 0
 
         if self.parent.control.control_mode == "record":
-            self.camera_count_list = []
+            self.signal_count_list = []
             self.img_ave = np.zeros((self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
         elif self.parent.control.control_mode == "scan":
-            self.camera_count_dict = {}
+            self.signal_count_dict = {}
 
         self.parent.device.cam.record(number_of_images=4, mode='ring buffer')
         # number_of_images is buffer size in ring buffer mode, and has to be at least 4
@@ -338,38 +338,46 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.signal.emit(self.img_dict)
 
                 elif type == "signal":
-                    image_bgsub = image - self.image_bg
-                    image_bgsub_chop = image_bgsub[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
+                    if self.parent.control.meas_mode == "fluorescence":
+                        image_post = image - self.image_bg
+                    elif self.parent.control.meas_mode == "absorption":
+                        image_post = np.divide(image, self.image_bg)
+                        image_post = -np.log10(image_post)
+                    else:
+                        print("Measurement type not supported.")
+                        return
+
+                    image_post_chop = image_post[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
                                                     self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
-                    cc = np.sum(image_bgsub_chop) # camera count
+                    sc = np.sum(image_post_chop) # signal count
                     num = int(self.counter/len(self.image_type))
                     self.img_dict = {}
                     self.img_dict["type"] = "signal"
                     self.img_dict["num_image"] = num
                     self.img_dict["image"] = image
-                    self.img_dict["image_bgsub"] = image_bgsub
-                    self.img_dict["image_bgsub_chop"] = image_bgsub_chop
-                    self.img_dict["camera_count"] = np.format_float_scientific(cc, precision=4)
-                    self.img_dict["camera_count_raw"] = cc
+                    self.img_dict["image_post"] = image_post
+                    self.img_dict["image_post_chop"] = image_post_chop
+                    self.img_dict["signal_count"] = np.format_float_scientific(sc, precision=4)
+                    self.img_dict["signal_count_raw"] = sc
 
                     if self.parent.control.control_mode == "record":
-                        # a list to save camera count of every single image
-                        self.camera_count_list.append(cc)
+                        # a list to save signal count of every single image
+                        self.signal_count_list.append(sc)
                         # the average image
-                        self.img_ave = np.average(np.array([self.img_ave, self.img_dict["image_bgsub"]]), axis=0, weights=[(num-1)/num, 1/num])
+                        self.img_ave = np.average(np.array([self.img_ave, self.img_dict["image_post"]]), axis=0, weights=[(num-1)/num, 1/num])
                         self.img_dict["image_ave"] = self.img_ave
-                        # camera count statistics, mean and error of mean = stand. dev. / sqrt(image number)
-                        self.img_dict["camera_count_ave"] = np.format_float_scientific(np.mean(self.camera_count_list), precision=4)
-                        self.img_dict["camera_count_err"] = np.format_float_scientific(np.std(self.camera_count_list)/np.sqrt(num), precision=4)
+                        # signal count statistics, mean and error of mean = stand. dev. / sqrt(image number)
+                        self.img_dict["signal_count_ave"] = np.format_float_scientific(np.mean(self.signal_count_list), precision=4)
+                        self.img_dict["signal_count_err"] = np.format_float_scientific(np.std(self.signal_count_list)/np.sqrt(num), precision=4)
                     elif self.parent.control.control_mode == "scan":
                         # value of the scan parameter
                         scan_param = self.parent.control.scan_config[f"Sequence element {num-1}"][self.parent.control.scan_elem_name]
-                        # a dictionary that saves values of scan parameters as keys and a list of camera counts of corresponding images as vals
-                        if scan_param in self.camera_count_dict:
-                            self.camera_count_dict[scan_param] = np.append(self.camera_count_dict[scan_param], cc)
+                        # a dictionary that saves values of scan parameters as keys and a list of signal counts of corresponding images as vals
+                        if scan_param in self.signal_count_dict:
+                            self.signal_count_dict[scan_param] = np.append(self.signal_count_dict[scan_param], sc)
                         else:
-                            self.camera_count_dict[scan_param] = np.array([cc])
-                        self.img_dict["camera_count_scan"] = self.camera_count_dict
+                            self.signal_count_dict[scan_param] = np.array([sc])
+                        self.img_dict["signal_count_scan"] = self.signal_count_dict
                         self.img_dict["scan_param"] = scan_param
 
                     # transfer saved data back to main thread by signal-slot mechanism
@@ -459,6 +467,10 @@ class Control(Scrollarea):
         super().__init__(parent, label="", type="vbox")
         self.setMaximumWidth(400)
         self.frame.setContentsMargins(0,0,0,0)
+
+        # interpret data as fluorescence or optical density
+        self.meas_mode = self.parent.defaults["measurement"].get("default")
+
         # number of pixels of the largest image we can do gaussian fit to in real time (i.e. updating in every experimental cycle)
         # it depends on CPU power and duration of experimental cycle
         self.cpu_limit = self.parent.defaults["gaussian_fit"].getint("cpu_limit")
@@ -485,8 +497,8 @@ class Control(Scrollarea):
         # boolean variable, turned on when the TCP thread is started
         self.tcp_active = False
 
-        # save camera count
-        self.camera_count_deque = deque([], maxlen=20)
+        # save signal count
+        self.signal_count_deque = deque([], maxlen=20)
 
         # places GUI elements
         self.place_recording()
@@ -518,29 +530,42 @@ class Control(Scrollarea):
         record_frame.addWidget(self.stop_bt, 0, 2)
         self.stop_bt.setEnabled(False)
 
-        # display camera count in real time
-        record_frame.addWidget(qt.QLabel("Camera count:"), 1, 0, 1, 1)
-        self.camera_count = qt.QLabel()
-        self.camera_count.setText("0")
-        self.camera_count.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
-        self.camera_count.setToolTip("after background subtraction")
-        record_frame.addWidget(self.camera_count, 1, 1, 1, 2)
+        record_frame.addWidget(qt.QLabel("Measurement:"), 1, 0, 1, 1)
+        self.meas_rblist = []
+        meas_bg = qt.QButtonGroup(self.parent)
+        op = [x.strip() for x in self.parent.defaults["measurement"]["options"].split(',')]
+        for j, i in enumerate(op):
+            meas_rb = qt.QRadioButton(i)
+            meas_rb.setFixedHeight(30)
+            meas_rb.setChecked(True if i == self.meas_mode else False)
+            meas_rb.toggled[bool].connect(lambda val, rb=meas_rb: self.set_meas_mode(rb.text(), val))
+            self.meas_rblist.append(meas_rb)
+            meas_bg.addButton(meas_rb)
+            record_frame.addWidget(meas_rb, 1, 1+j, 1, 1)
 
-        # display mean of camera count in real time in "record" mode
-        record_frame.addWidget(qt.QLabel("Camera mean:"), 2, 0, 1, 1)
-        self.camera_count_mean = qt.QLabel()
-        self.camera_count_mean.setText("0")
-        self.camera_count_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
-        self.camera_count_mean.setToolTip("after background subtraction")
-        record_frame.addWidget(self.camera_count_mean, 2, 1, 1, 2)
+        # display signal count in real time
+        record_frame.addWidget(qt.QLabel("Signal count:"), 2, 0, 1, 1)
+        self.signal_count = qt.QLabel()
+        self.signal_count.setText("0")
+        self.signal_count.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
+        self.signal_count.setToolTip("Singal after bkg subtraction or OD")
+        record_frame.addWidget(self.signal_count, 2, 1, 1, 2)
 
-        # display error of mean of camera count in real time in "record" mode
-        record_frame.addWidget(qt.QLabel("Camera error:"), 3, 0, 1, 1)
-        self.camera_count_err_mean = qt.QLabel()
-        self.camera_count_err_mean.setText("0")
-        self.camera_count_err_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
-        self.camera_count_err_mean.setToolTip("after background subtraction")
-        record_frame.addWidget(self.camera_count_err_mean, 3, 1, 1, 2)
+        # display mean of signal count in real time in "record" mode
+        record_frame.addWidget(qt.QLabel("Singal mean:"), 3, 0, 1, 1)
+        self.signal_count_mean = qt.QLabel()
+        self.signal_count_mean.setText("0")
+        self.signal_count_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
+        self.signal_count_mean.setToolTip("Singal after bkg subtraction or OD")
+        record_frame.addWidget(self.signal_count_mean, 3, 1, 1, 2)
+
+        # display error of mean of signal count in real time in "record" mode
+        record_frame.addWidget(qt.QLabel("Signal error:"), 4, 0, 1, 1)
+        self.signal_count_err_mean = qt.QLabel()
+        self.signal_count_err_mean.setText("0")
+        self.signal_count_err_mean.setStyleSheet("QLabel{background-color: gray; font: 20pt}")
+        self.signal_count_err_mean.setToolTip("Singal after bkg subtraction or OD")
+        record_frame.addWidget(self.signal_count_err_mean, 4, 1, 1, 2)
 
     # place image control gui elements
     def place_image_control(self):
@@ -849,10 +874,10 @@ class Control(Scrollarea):
         self.control_mode = mode
         self.active = True
 
-        # clear camera count QLabels
-        self.camera_count.setText("0")
-        self.camera_count_mean.setText("0")
-        self.camera_count_err_mean.setText("0")
+        # clear signal count QLabels
+        self.signal_count.setText("0")
+        self.signal_count_mean.setText("0")
+        self.signal_count_err_mean.setText("0")
         self.num_image.setText("0")
 
         # clear images
@@ -929,40 +954,47 @@ class Control(Scrollarea):
         elif img_dict["type"] == "signal":
             # update signal images
             img = img_dict["image"]
-            self.parent.image_win.imgs_dict["Signal"].setImage(img)
-            img = img_dict["image_bgsub"]
-            self.parent.image_win.imgs_dict["Signal w/ bg subtraction"].setImage(img)
+            self.parent.image_win.imgs_dict["Raw Signal"].setImage(img)
+            img = img_dict["image_post"]
+            if self.meas_mode == "fluorescence":
+                self.parent.image_win.imgs_dict["Signal w/ bg subtraction"].setImage(img)
+            elif self.meas_mode == "absorption":
+                self.parent.image_win.imgs_dict["Optical density"].setImage(img)
+            else:
+                print("Measurement type not supported")
+                return
+
             self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
             self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
             self.num_image.setText(str(img_dict["num_image"]))
-            self.camera_count.setText(str(img_dict["camera_count"]))
-            self.camera_count_deque.append(img_dict["camera_count_raw"])
-            self.parent.image_win.cc_plot_curve.setData(np.array(self.camera_count_deque), symbol='o')
+            self.signal_count.setText(str(img_dict["signal_count"]))
+            self.signal_count_deque.append(img_dict["signal_count_raw"])
+            self.parent.image_win.sc_plot_curve.setData(np.array(self.signal_count_deque), symbol='o')
 
             if self.control_mode == "record":
                 self.parent.image_win.ave_img.setImage(img_dict["image_ave"])
-                self.camera_count_mean.setText(str(img_dict["camera_count_ave"]))
-                self.camera_count_err_mean.setText(str(img_dict["camera_count_err"]))
+                self.signal_count_mean.setText(str(img_dict["signal_count_ave"]))
+                self.signal_count_err_mean.setText(str(img_dict["signal_count_err"]))
             elif self.control_mode == "scan":
                 x = np.array([])
                 y = np.array([])
                 err = np.array([])
-                for i, (param, cc_list) in enumerate(img_dict["camera_count_scan"].items()):
+                for i, (param, sc_list) in enumerate(img_dict["signal_count_scan"].items()):
                     x = np.append(x, float(param))
-                    y = np.append(y, np.mean(cc_list))
-                    err = np.append(err, np.std(cc_list)/np.sqrt(len(cc_list)))
+                    y = np.append(y, np.mean(sc_list))
+                    err = np.append(err, np.std(sc_list)/np.sqrt(len(sc_list)))
                 # sort data in order of value of the scan parameter
                 order = x.argsort()
                 x = x[order]
                 y = y[order]
                 err = err[order]
-                # update "camera count vs scan parameter" plot
+                # update "signal count vs scan parameter" plot
                 self.parent.image_win.scan_plot_curve.setData(x, y, symbol='o')
                 self.parent.image_win.scan_plot_errbar.setData(x=x, y=y, top=err, bottom=err, beam=(x[-1]-x[0])/len(x)*0.2, pen=pg.mkPen('w', width=1.2))
 
             if self.gaussian_fit:
                 # do 2D gaussian fit and update GUI displays
-                param = gaussianfit(img_dict["image_bgsub_chop"])
+                param = gaussianfit(img_dict["image_post_chop"])
                 self.amp.setText("{:.2f}".format(param["amp"]))
                 self.offset.setText("{:.2f}".format(param["offset"]))
                 self.x_mean.setText("{:.2f}".format(param["x_mean"]+self.roi["xmin"]))
@@ -984,13 +1016,14 @@ class Control(Scrollarea):
                         root.attrs["scanned param value"] = img_dict["scan_param"]
                     dset = root.create_dataset(
                                     name                 = "image" + "_{:06d}".format(img_dict["num_image"]),
-                                    data                 = img_dict["image_bgsub_chop"],
-                                    shape                = img_dict["image_bgsub_chop"].shape,
+                                    data                 = img_dict["image_post_chop"],
+                                    shape                = img_dict["image_post_chop"].shape,
                                     dtype                = "f",
                                     compression          = "gzip",
                                     compression_opts     = 4
                                 )
-                    dset.attrs["camera count"] = img_dict["camera_count"]
+                    dset.attrs["signal count"] = img_dict["signal_count"]
+                    dset.attrs["measurement type"] = self.meas_mode
                     dset.attrs["region of interest: xmin"] = self.roi["xmin"]
                     dset.attrs["region of interest: xmax"] = self.roi["xmax"]
                     dset.attrs["region of interest: ymin"] = self.roi["ymin"]
@@ -1012,6 +1045,9 @@ class Control(Scrollarea):
         self.stop_bt.setEnabled(not arg)
         self.record_bt.setEnabled(arg)
         self.scan_bt.setEnabled(arg)
+        for rb in self.meas_rblist:
+            rb.setEnabled(arg)
+
         self.num_img_to_take_sb.setEnabled(arg)
         self.x_min_sb.setEnabled(arg)
         self.x_max_sb.setEnabled(arg)
@@ -1178,6 +1214,9 @@ class Control(Scrollarea):
 
         config = configparser.ConfigParser()
 
+        config["record_control"] = {}
+        config["record_control"]["meas_mode"] = self.meas_mode
+
         config["image_control"] = {}
         config["image_control"]["num_image"] = str(self.num_img_to_take_sb.value())
         config["image_control"]["xmin"] = str(self.x_min_sb.value())
@@ -1217,6 +1256,11 @@ class Control(Scrollarea):
         config = configparser.ConfigParser()
         config.read(file_name)
 
+        for i in self.meas_rblist:
+            if i.text() == config["record_control"]["meas_mode"]:
+                i.setChecked(True)
+                break
+
         self.num_img_to_take_sb.setValue(config["image_control"].getint("num_image"))
         # the spinbox emits 'valueChanged' signal, and its connected function will be called
         self.x_min_sb.setValue(config["image_control"].getint("xmin"))
@@ -1253,6 +1297,10 @@ class Control(Scrollarea):
         self.server_addr_la.setText(server_host+" ("+server_port+")")
         self.tcp_start()
 
+    def set_meas_mode(self, text, checked):
+        if checked:
+            self.meas_mode = text
+
 # the class that places images and plots
 class ImageWin(Scrollarea):
     def __init__(self, parent):
@@ -1266,7 +1314,7 @@ class ImageWin(Scrollarea):
         self.frame.setContentsMargins(0,0,0,0)
         self.imgs_dict = {}
         self.img_roi_dict ={}
-        self.imgs_name = ["Background", "Signal", "Signal w/ bg subtraction"]
+        self.imgs_name = ["Background", "Raw Signal", "Signal w/ bg subtraction", "Optical density"]
 
         # place images and plots
         self.place_sgn_imgs()
@@ -1277,7 +1325,7 @@ class ImageWin(Scrollarea):
         self.place_ave_image()
         self.place_scan_plot()
 
-        self.place_cc_plot()
+        self.place_sc_plot()
 
     # place background and signal images
     def place_sgn_imgs(self):
@@ -1330,15 +1378,15 @@ class ImageWin(Scrollarea):
 
         self.img_tab.setCurrentIndex(2) # make tab #2 (count from 0) to show as default
 
-    # place plots of camera_count along one axis
+    # place plots of signal_count along one axis
     def place_axis_plots(self):
         tickstyle = {"showValues": False}
 
-        # place plot of camera_count along x axis
+        # place plot of signal_count along x axis
         x_data = np.sum(self.data, axis=1)
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
         self.frame.addWidget(graphlayout, 0, 1, 2, 1)
-        x_plot = graphlayout.addPlot(title="Camera count v.s. X")
+        x_plot = graphlayout.addPlot(title="Signal count v.s. X")
         x_plot.showGrid(True, True)
         x_plot.setLabel("top")
         # x_plot.getAxis("top").setTicks([])
@@ -1358,9 +1406,9 @@ class ImageWin(Scrollarea):
 
         graphlayout.nextRow()
 
-        # place plot of camera_count along y axis
+        # place plot of signal_count along y axis
         y_data = np.sum(self.data, axis=0)
-        y_plot = graphlayout.addPlot(title="Camera count v.s. Y")
+        y_plot = graphlayout.addPlot(title="Signal count v.s. Y")
         y_plot.showGrid(True, True)
         y_plot.setLabel("top")
         y_plot.getAxis("top").setStyle(**tickstyle)
@@ -1395,7 +1443,7 @@ class ImageWin(Scrollarea):
     def place_scan_plot(self):
         tickstyle = {"showValues": False}
 
-        self.scan_plot_widget = pg.PlotWidget(title="Camera count v.s. Scan param.")
+        self.scan_plot_widget = pg.PlotWidget(title="Signal count v.s. Scan param.")
         self.scan_plot_widget.showGrid(True, True)
         self.scan_plot_widget.setLabel("top")
         self.scan_plot_widget.getAxis("top").setStyle(**tickstyle)
@@ -1412,19 +1460,19 @@ class ImageWin(Scrollarea):
 
         self.ave_scan_tab.addTab(self.scan_plot_widget, " Scan Plot ")
 
-    # place a plot showing running camera count
-    def place_cc_plot(self):
+    # place a plot showing running signal count
+    def place_sc_plot(self):
         tickstyle = {"showValues": False}
 
-        self.cc_plot_widget = pg.PlotWidget(title="Camera count")
-        self.cc_plot_widget.showGrid(True, True)
-        self.cc_plot_widget.setLabel("top")
-        self.cc_plot_widget.getAxis("top").setStyle(**tickstyle)
-        self.cc_plot_widget.setLabel("right")
-        self.cc_plot_widget.getAxis("right").setStyle(**tickstyle)
-        self.cc_plot_curve = self.cc_plot_widget.plot()
+        self.sc_plot_widget = pg.PlotWidget(title="Signal count")
+        self.sc_plot_widget.showGrid(True, True)
+        self.sc_plot_widget.setLabel("top")
+        self.sc_plot_widget.getAxis("top").setStyle(**tickstyle)
+        self.sc_plot_widget.setLabel("right")
+        self.sc_plot_widget.getAxis("right").setStyle(**tickstyle)
+        self.sc_plot_curve = self.sc_plot_widget.plot()
 
-        self.frame.addWidget(self.cc_plot_widget, 2, 1)
+        self.frame.addWidget(self.sc_plot_widget, 2, 1)
 
     # set ROI in background/signal imgaes
     def img_roi_update(self, roi):
@@ -1438,7 +1486,7 @@ class ImageWin(Scrollarea):
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
 
-    # set ROI in the plot of camera count along x-axis
+    # set ROI in the plot of signal count along x-axis
     def x_plot_lr_update(self):
         x_min = self.x_plot_lr.getRegion()[0]
         x_max = self.x_plot_lr.getRegion()[1]
@@ -1446,7 +1494,7 @@ class ImageWin(Scrollarea):
         self.parent.control.x_min_sb.setValue(round(x_min))
         self.parent.control.x_max_sb.setValue(round(x_max))
 
-    # set ROI in the plot of camera count along y-axis
+    # set ROI in the plot of signal count along y-axis
     def y_plot_lr_update(self):
         y_min = self.y_plot_lr.getRegion()[0]
         y_max = self.y_plot_lr.getRegion()[1]
