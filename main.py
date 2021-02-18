@@ -1529,6 +1529,21 @@ class CameraGUI(qt.QMainWindow):
         self.resize(1600, 900)
         self.show()
 
+    def closeEvent(self, event):
+        if not self.control.active:
+            super().closeEvent(event)
+
+        else:
+            # ask if continue to close
+            ans = qt.QMessageBox.warning(self, 'Program warning',
+                                'Warning: the program is running. Conitnue to close the program?',
+                                qt.QMessageBox.Yes | qt.QMessageBox.No,
+                                qt.QMessageBox.No)
+            if ans == qt.QMessageBox.Yes:
+                super().closeEvent(event)
+            else:
+                event.ignore()
+
 
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
