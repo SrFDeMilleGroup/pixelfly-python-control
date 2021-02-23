@@ -328,6 +328,10 @@ class CamThread(PyQt5.QtCore.QThread):
                 # image is in "unit16" data type, althought it only has 14 non-zero bits at most
                 # convert the image data type to float, to avoid overflow
                 image = np.flip(image.T, 1).astype("float")
+                xstart = int(image.shape[0]/2 - self.parent.device.image_shape['xmax']/2)
+                ystart = int(image.shape[1]/2 - self.parent.device.image_shape['ymax']/2)
+                image = image[xstart : xstart+self.parent.device.image_shape['xmax'],
+                                ystart : ystart+self.parent.device.image_shape['ymax']]
 
                 # after a new image is read out
                 if type == "background":
@@ -715,6 +719,7 @@ class Control(Scrollarea):
 
         # set sensor format
         self.sensor_format_cb = newComboBox()
+        self.sensor_format_cb.setToolTip("Customized format doesn't reduce active CCD size, but crops images in software.")
         self.sensor_format_cb.setMaximumWidth(200)
         self.sensor_format_cb.setMaximumHeight(20)
         op = [x.strip() for x in self.parent.defaults["sensor_format"]["options"].split(',')]
@@ -1016,8 +1021,8 @@ class Control(Scrollarea):
                         root.attrs["scanned param value"] = img_dict["scan_param"]
                     dset = root.create_dataset(
                                     name                 = "image" + "_{:06d}".format(img_dict["num_image"]),
-                                    data                 = img_dict["image_post_chop"],
-                                    shape                = img_dict["image_post_chop"].shape,
+                                    data                 = img_dict["image_post"],
+                                    shape                = img_dict["image_post"].shape,
                                     dtype                = "f",
                                     compression          = "gzip",
                                     compression_opts     = 4
