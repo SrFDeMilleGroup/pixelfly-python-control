@@ -254,7 +254,7 @@ class TcpThread(PyQt5.QtCore.QThread):
                             elif self.length_get and len(self.data) >= self.length:
                                 message = self.data.decode('utf-8')
                                 # print(message)
-                                with open("scan_sequence\latest_sequence.ini", "w") as f:
+                                with open(self.parent.defaults["scan_file_name"]["default"], "w") as f:
                                     f.write(message)
                                 t = time.time()
                                 time_string = time.strftime("%Y-%m-%d  %H:%M:%S.", time.localtime(t))
@@ -346,7 +346,7 @@ class CamThread(PyQt5.QtCore.QThread):
                         image_post = image - self.image_bg
                     elif self.parent.control.meas_mode == "absorption":
                         image_post = np.divide(image, self.image_bg)
-                        image_post = -np.log10(image_post)
+                        image_post = -np.log(image_post)
                     else:
                         print("Measurement type not supported.")
                         return
@@ -969,8 +969,12 @@ class Control(Scrollarea):
                 print("Measurement type not supported")
                 return
 
+            img = img_dict["image_post"]
             self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
             self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
+            img_roi = img_dict["image_post"][self.roi["xmin"]:self.roi["xmax"], self.roi["ymin"]:self.roi["ymax"]]
+            self.parent.image_win.x_plot_roi_curve.setData(np.sum(img_roi, axis=1))
+            self.parent.image_win.y_plot_roi_curve.setData(np.sum(img_roi, axis=0))
             self.num_image.setText(str(img_dict["num_image"]))
             self.signal_count.setText(str(img_dict["signal_count"]))
             self.signal_count_deque.append(img_dict["signal_count_raw"])
@@ -1054,20 +1058,21 @@ class Control(Scrollarea):
             rb.setEnabled(arg)
 
         self.num_img_to_take_sb.setEnabled(arg)
-        self.x_min_sb.setEnabled(arg)
-        self.x_max_sb.setEnabled(arg)
-        self.y_min_sb.setEnabled(arg)
-        self.y_max_sb.setEnabled(arg)
         self.gauss_fit_chb.setEnabled(arg)
         self.img_save_chb.setEnabled(arg)
+        self.run_name_le.setEnabled(arg)
         self.cam_ctrl_box.setEnabled(arg)
         self.save_load_box.setEnabled(arg)
 
         # enable/disable in image ROI selection
-        for key, roi in self.parent.image_win.img_roi_dict.items():
-            roi.setEnabled(arg)
-        self.parent.image_win.x_plot_lr.setMovable(arg)
-        self.parent.image_win.y_plot_lr.setMovable(arg)
+        # self.x_min_sb.setEnabled(arg)
+        # self.x_max_sb.setEnabled(arg)
+        # self.y_min_sb.setEnabled(arg)
+        # self.y_max_sb.setEnabled(arg)
+        # for key, roi in self.parent.image_win.img_roi_dict.items():
+        #     roi.setEnabled(arg)
+        # self.parent.image_win.x_plot_lr.setMovable(arg)
+        # self.parent.image_win.y_plot_lr.setMovable(arg)
 
         # force GUI to respond now
         self.parent.app.processEvents()
@@ -1387,10 +1392,13 @@ class ImageWin(Scrollarea):
     def place_axis_plots(self):
         tickstyle = {"showValues": False}
 
+        self.curve_tab = qt.QTabWidget()
+        self.frame.addWidget(self.curve_tab, 0, 1, 2, 1)
+
         # place plot of signal_count along x axis
         x_data = np.sum(self.data, axis=1)
         graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
-        self.frame.addWidget(graphlayout, 0, 1, 2, 1)
+        self.curve_tab.addTab(graphlayout, " Full Frame Signal ")
         x_plot = graphlayout.addPlot(title="Signal count v.s. X")
         x_plot.showGrid(True, True)
         x_plot.setLabel("top")
@@ -1427,6 +1435,34 @@ class ImageWin(Scrollarea):
         self.y_plot_lr.setBounds([0, self.parent.device.image_shape["ymax"]])
         y_plot.addItem(self.y_plot_lr)
         self.y_plot_lr.sigRegionChanged.connect(self.y_plot_lr_update)
+
+        graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
+        self.curve_tab.addTab(graphlayout, " Signal in ROI ")
+
+        x_plot = graphlayout.addPlot(title="Signal count v.s. X")
+        x_plot.showGrid(True, True)
+        x_plot.setLabel("top")
+        # x_plot.getAxis("top").setTicks([])
+        x_plot.getAxis("top").setStyle(**tickstyle)
+        x_plot.setLabel("right")
+        # x_plot.getAxis("right").setTicks([])
+        x_plot.getAxis("right").setStyle(**tickstyle)
+        data_roi = self.data[self.parent.defaults["roi"].getint("xmin"):self.parent.defaults["roi"].getint("xmax"),
+                            self.parent.defaults["roi"].getint("ymin"):self.parent.defaults["roi"].getint("ymax")]
+        x_data = np.sum(data_roi, axis=1)
+        self.x_plot_roi_curve = x_plot.plot(x_data)
+
+        graphlayout.nextRow()
+
+        # place plot of signal_count along y axis
+        y_plot = graphlayout.addPlot(title="Signal count v.s. Y")
+        y_plot.showGrid(True, True)
+        y_plot.setLabel("top")
+        y_plot.getAxis("top").setStyle(**tickstyle)
+        y_plot.setLabel("right")
+        y_plot.getAxis("right").setStyle(**tickstyle)
+        y_data = np.sum(data_roi, axis=0)
+        self.y_plot_roi_curve = y_plot.plot(y_data)
 
     # place averaged image
     def place_ave_image(self):
