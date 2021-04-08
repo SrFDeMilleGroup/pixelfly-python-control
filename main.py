@@ -36,9 +36,9 @@ def steal_colormap(colorname="viridis", lut=6):
 # generate a fake image of 2D gaussian distribution image
 def fake_data(xmax, ymax):
     x_range=20
-    y_range=30
+    y_range=20
     x_center=12
-    y_center=17
+    y_center=16
     x_err=3
     y_err=2
     amp=100
@@ -335,6 +335,7 @@ class CamThread(PyQt5.QtCore.QThread):
 
                 # after a new image is read out
                 if type == "background":
+                    # image = np.zeros((self.parent.device.image_shape['xmax'], self.parent.device.image_shape['ymax']))
                     self.image_bg = image
                     self.img_dict = {}
                     self.img_dict["type"] = "background"
@@ -342,6 +343,7 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.signal.emit(self.img_dict)
 
                 elif type == "signal":
+                    # image = fake_data(self.parent.device.image_shape['xmax'], self.parent.device.image_shape['ymax'])
                     if self.parent.control.meas_mode == "fluorescence":
                         image_post = image - self.image_bg
                     elif self.parent.control.meas_mode == "absorption":
@@ -1011,6 +1013,15 @@ class Control(Scrollarea):
                 self.y_mean.setText("{:.2f}".format(param["y_mean"]+self.roi["ymin"]))
                 self.y_stand_dev.setText("{:.2f}".format(param["y_width"]))
 
+                xy = np.indices((self.roi["xmax"]-self.roi["xmin"], self.roi["ymax"]-self.roi["ymin"]))
+                fit = gaussian(param["amp"], param["x_mean"], param["y_mean"], param["x_width"], param["y_width"], param["offset"])(*xy)
+
+                self.parent.image_win.x_plot_roi_fit_curve.setData(np.sum(fit, axis=1), pen=pg.mkPen('r'))
+                self.parent.image_win.y_plot_roi_fit_curve.setData(np.sum(fit, axis=0), pen=pg.mkPen('r'))
+            else:
+                self.parent.image_win.x_plot_roi_fit_curve.setData(np.array([]))
+                self.parent.image_win.y_plot_roi_fit_curve.setData(np.array([]))
+
             if self.img_save:
                 # save imagees to local hdf file
                 # in "record" mode, all images are save in the same group
@@ -1058,7 +1069,7 @@ class Control(Scrollarea):
             rb.setEnabled(arg)
 
         self.num_img_to_take_sb.setEnabled(arg)
-        self.gauss_fit_chb.setEnabled(arg)
+        # self.gauss_fit_chb.setEnabled(arg)
         self.img_save_chb.setEnabled(arg)
         self.run_name_le.setEnabled(arg)
         self.cam_ctrl_box.setEnabled(arg)
@@ -1451,6 +1462,7 @@ class ImageWin(Scrollarea):
                             self.parent.defaults["roi"].getint("ymin"):self.parent.defaults["roi"].getint("ymax")]
         x_data = np.sum(data_roi, axis=1)
         self.x_plot_roi_curve = x_plot.plot(x_data)
+        self.x_plot_roi_fit_curve = x_plot.plot(np.array([]))
 
         graphlayout.nextRow()
 
@@ -1463,6 +1475,7 @@ class ImageWin(Scrollarea):
         y_plot.getAxis("right").setStyle(**tickstyle)
         y_data = np.sum(data_roi, axis=0)
         self.y_plot_roi_curve = y_plot.plot(y_data)
+        self.y_plot_roi_fit_curve = y_plot.plot(np.array([]))
 
     # place averaged image
     def place_ave_image(self):
