@@ -64,15 +64,23 @@ def linearfit(x, y, yerr):
 
 class tofanalysis:
     def __init__(self, fname, gname):
-        param = {"pixeltomm": 0.1, "kB": 1.38064852e-23, "m": 87*1.66053873e-27, "confidence_band": 0.95}
+        param = {"pixeltomm": 0.107, "kB": 1.38064852e-23, "m": 86.9*1.66053873e-27, "confidence_band": 0.95}
 
         time_sq, axial_width_sq, axial_width_sq_err, radial_width_sq, radial_width_sq_err = self.readhdf(fname, gname, param)
+
+        # time_sq = time_sq[2:]
+        # axial_width_sq = axial_width_sq[2:]
+        # axial_width_sq_err = axial_width_sq_err[2:]
+        # radial_width_sq = radial_width_sq[2:]
+        # radial_width_sq_err = radial_width_sq_err[2:]
+
         mpl.style.use("seaborn")
         self.fig, self.ax = plt.subplots()
         self.plot(time_sq, radial_width_sq, radial_width_sq_err, type="radial", param=param)
         self.plot(time_sq, axial_width_sq, axial_width_sq_err, type="axial", param=param)
         self.ax.set_xlabel("time of flight$^2$ [ms$^2$]")
         self.ax.set_ylabel("cloud rms radius$^2$ [mm$^2$]")
+        self.ax.set_title(gname)
         self.ax.legend()
         plt.show()
 
@@ -121,7 +129,7 @@ class tofanalysis:
         popt, pcov = linearfit(time_sq, width_sq, width_sq_err)
         fit_chisq = np.sum(((linear(time_sq, *popt)-width_sq)/width_sq_err)**2)
         reduced_chisq = fit_chisq/(len(time_sq)-2)
-        gof = 100*(1 - stats.chi2.cdf(fit_chisq, len(time_sq)-2)) # in percent, goodness of fit, see https://faculty1.coloradocollege.edu/~sburns/toolbox/DataFitting.html
+        # gof = 100*(1 - stats.chi2.cdf(fit_chisq, len(time_sq)-2)) # in percent, goodness of fit, see https://faculty1.coloradocollege.edu/~sburns/toolbox/DataFitting.html
         self.ax.errorbar(time_sq, width_sq, yerr=width_sq_err, marker='o', mfc=color, markeredgewidth=0.8, markeredgecolor='k', ecolor=color, linestyle='')
 
         x = np.linspace(0, np.amax(time_sq), 200)
@@ -129,10 +137,10 @@ class tofanalysis:
         c = stats.norm.ppf((1+param["confidence_band"])/2) # 95% confidence level gives critical value c=1.96
         perr = np.sqrt(np.diag(pcov)) # gives the standard deviation of fitting parameters
         temp = popt[0]*param["m"]/param["kB"]*1e6 # convert to uK
-        temp_err = c*perr[0]*param["m"]/param["kB"]*1e6
+        temp_err = perr[0]*param["m"]/param["kB"]*1e6
         radius = np.sqrt(popt[1])
-        radius_err = c*0.5*perr[1]/np.sqrt(popt[1])
-        label = type + ": {:.0f}({:.0f}) uK, {:.2f}({:.2f}) mm, $\chi^2_\\nu$: {:.2f} ({:.0f}%)".format(temp, temp_err, radius, radius_err, reduced_chisq, gof)
+        radius_err = 0.5*perr[1]/np.sqrt(popt[1])
+        label = type + ": {:.0f}({:.0f}) uK, {:.2f}({:.2f}) mm, $\chi^2_\\nu$: {:.2f}".format(temp, temp_err, radius, radius_err, reduced_chisq)
         self.ax.plot(x, width_sq_fit, color, label=label)
 
         k, b = unc.correlated_values(popt, pcov)
@@ -143,9 +151,9 @@ class tofanalysis:
 
 
 filepath = "C:/Users/dur!p5/github/pixelfly-python-control/saved_images/"
-filename = "images_20210526.hdf"
+filename = "images_20210805.hdf"
 fname = filepath + filename
-gname = "dcfluormolasses_20210526_171825"
+gname = "run_20210805_192343"
 
 # calculate and plot temperature, inital rms radius, reduced \chi^2, 1-CDF(\chi^2)
 # indicate uncertainties at "confidence_band" confidence level

@@ -13,7 +13,7 @@ def gaussian(amp, x_mean, y_mean, x_width, y_width, offset):
 # return a 2D gaussian fit
 # generally a 2D gaussian fit can have 7 params, 6 of them are implemented here (the excluded one is an angle)
 # codes adapted from https://scipy-cookbook.readthedocs.io/items/FittingData.html
-def gaussianfit(data, roi, showimg=False):
+def gaussianfit(data, roi, showimg=False, normalize=False):
     # calculate moments for initial guess
     data = data[roi["xmin"]:roi["xmax"], roi["ymin"]:roi["ymax"]]
     if showimg:
@@ -43,12 +43,16 @@ def gaussianfit(data, roi, showimg=False):
     p_dict["amp"] = p[0]
     p_dict["offset"] = p[5]
 
+    if normalize:
+        p_dict["x_width"] = p_dict["x_width"]/((total)**(1/3))
+        p_dict["y_width"] = p_dict["y_width"]/((total)**(1/3))
+
     return p_dict
 
 filepath = "C:/Users/dur!p5/github/pixelfly-python-control/saved_images/"
-filename = "images_20210526.hdf"
-groupname = "dcfluormot_20210526_170235"
-pixeltomm = 0.1
+filename = "images_20210608.hdf"
+groupname = "molassestof_20210608_193024"
+pixeltomm = 0.107
 
 with h5py.File(filepath+filename, "r") as f:
     group = f[groupname]
@@ -72,14 +76,22 @@ with h5py.File(filepath+filename, "r") as f:
             new_roi["xmax"] = int(np.minimum(roi["xmin"]+fitresult["x_mean"]+3*fitresult["x_width"], img_data.shape[0]))
             new_roi["ymin"] = int(np.maximum(roi["ymin"]+fitresult["y_mean"]-3*fitresult["y_width"], 0))
             new_roi["ymax"] = int(np.minimum(roi["ymin"]+fitresult["y_mean"]+3*fitresult["y_width"], img_data.shape[1]))
-            fitresult = gaussianfit(img_data, new_roi, showimg=False)
+            fitresult = gaussianfit(img_data, new_roi, showimg=False, normalize=False)
             # print(fitresult)
             x_width_list =np.append(x_width_list, fitresult["x_width"]*pixeltomm)
             y_width_list =np.append(y_width_list, fitresult["y_width"]*pixeltomm)
+
+        sorted_index_array = np.argsort(y_width_list)
+        # y_width_list = y_width_list[sorted_index_array][2:-2]
+        # print(y_width_list)
         axialwidth = np.append(axialwidth, np.mean(y_width_list))
         axialwidth_err = np.append(axialwidth_err, np.std(y_width_list)/np.sqrt(len(y_width_list)))
+
+        sorted_index_array = np.argsort(x_width_list)
+        # x_width_list = x_width_list[sorted_index_array][2:-2]
         radialwidth = np.append(radialwidth, np.mean(x_width_list))
         radialwidth_err = np.append(radialwidth_err, np.std(x_width_list)/np.sqrt(len(x_width_list)))
+
         scanparam = np.append(scanparam, float(subg.split("_")[-1]))
 
 mpl.style.use("seaborn")

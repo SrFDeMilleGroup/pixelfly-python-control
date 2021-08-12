@@ -929,6 +929,14 @@ class Control(Scrollarea):
         # disable and gray out image/camera controls, in case of any accidental parameter change
         self.enable_widgets(False)
 
+        if self.meas_mode == "fluorescence":
+            self.parent.image_win.img_tab.setCurrentIndex(2) # switch to fluorescence plot tab
+        elif self.meas_mode == "absorption":
+            self.parent.image_win.img_tab.setCurrentIndex(3) # switch to absorption plot tab
+        else:
+            print("Measurement mode not supported.")
+            return
+
         # initialize a image taking thread
         self.rec = CamThread(self.parent)
         self.rec.signal.connect(self.img_ctrl_update)
