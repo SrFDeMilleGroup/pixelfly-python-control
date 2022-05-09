@@ -1,16 +1,16 @@
 import numpy as np
 
 
-number = 1e9
+number = 2.0e9
 number_err = 0
+axial_temp = 14 # in uK
+axial_temp_err = 0
 radial_temp = 9 # in uK
 radial_temp_err = 0
-axial_temp = 9 # in uK
-axial_temp_err = 0
-radial_width = 1.2 # in mm
-radial_width_err = 0
-axial_width = 1.2 # in mm
+axial_width = 1.60 # in mm
 axial_width_err = 0
+radial_width = 1.60 # in mm
+radial_width_err = 0
 
 kB = 1.38064852e-23 # J/K
 mass = 86.9*1.66053873e-27 # kg

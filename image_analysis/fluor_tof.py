@@ -68,11 +68,19 @@ class tofanalysis:
 
         time_sq, axial_width_sq, axial_width_sq_err, radial_width_sq, radial_width_sq_err = self.readhdf(fname, gname, param)
 
-        # time_sq = time_sq[2:]
-        # axial_width_sq = axial_width_sq[2:]
-        # axial_width_sq_err = axial_width_sq_err[2:]
-        # radial_width_sq = radial_width_sq[2:]
-        # radial_width_sq_err = radial_width_sq_err[2:]
+        order = time_sq.argsort()
+        time_sq = time_sq[order]
+        axial_width_sq = axial_width_sq[order]
+        axial_width_sq_err = axial_width_sq_err[order]
+        radial_width_sq = radial_width_sq[order]
+        radial_width_sq_err = radial_width_sq_err[order]
+
+        # ind = np.arange(0, 4)
+        # time_sq = time_sq[ind]
+        # axial_width_sq = axial_width_sq[ind]
+        # axial_width_sq_err = axial_width_sq_err[ind]
+        # radial_width_sq = radial_width_sq[ind]
+        # radial_width_sq_err = radial_width_sq_err[ind]
 
         mpl.style.use("seaborn")
         self.fig, self.ax = plt.subplots()
@@ -151,9 +159,9 @@ class tofanalysis:
 
 
 filepath = "C:/Users/dur!p5/github/pixelfly-python-control/saved_images/"
-filename = "images_20210805.hdf"
+filename = "images_20210922.hdf"
 fname = filepath + filename
-gname = "run_20210805_192343"
+gname = "rffluor_lambda_20210922_200516"
 
 # calculate and plot temperature, inital rms radius, reduced \chi^2, 1-CDF(\chi^2)
 # indicate uncertainties at "confidence_band" confidence level

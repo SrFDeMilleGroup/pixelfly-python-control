@@ -51,7 +51,7 @@ def gaussianfit(data, roi, showimg=False):
 class atomnumanalysis:
     def __init__(self, fname, gname, detuning):
         # resonant_cross_section in mm^2, linewidth in MHz
-        param = {"pixeltomm": 0.107, "kB": 1.38064852e-23, "m": 86.9*1.66053873e-27, "confidence_band": 0.95, "resonant_cross_section": 1.356e-7, "linewidth":6.065}
+        param = {"pixeltomm": 0.099, "kB": 1.38064852e-23, "m": 86.9*1.66053873e-27, "confidence_band": 0.95, "resonant_cross_section": 1.356e-7, "linewidth":6.065}
 
         atom_num = self.readhdf(fname, gname, param, detuning)
 
@@ -64,16 +64,18 @@ class atomnumanalysis:
         self.ax.set_ylabel("Atom number")
         self.ax.set_title(gname)
         self.ax.legend()
+        # plt.hist(atom_num, bins=40)
         plt.show()
 
     def readhdf(self, fname, gname, param, detuning):
         with h5py.File(fname, "r") as f:
             group = f[gname]
             atom_num = np.array([])
+            cross_section = param["resonant_cross_section"]/(1+4*(detuning/param["linewidth"])**2)
 
             for img in group.keys():
                 img_data = group[img]
-                roi = {"xmin":120, "xmax":200, "ymin":120, "ymax":200} # choose a braod roi for the first fit trial
+                roi = {"xmin":105, "xmax":175, "ymin":75, "ymax":155} # choose a braod roi for the first fit trial
 
                 fitresult = gaussianfit(img_data, roi)
                 new_roi = {} # calculate a new roi based on the first fit result (use +/-3sigma region)
@@ -91,8 +93,7 @@ class atomnumanalysis:
                 new_roi["ymax"] = int(np.minimum(roi["ymin"]+fitresult["y_mean"]+3*fitresult["y_width"], img_data.shape[1]))
 
                 sc = np.sum(img_data[new_roi["xmin"]:new_roi["xmax"], new_roi["ymin"]:new_roi["ymax"]]) # signal count
-                cross_section = param["resonant_cross_section"]/(1+4*(detuning/param["linewidth"])**2)
-                atom_num = np.append(atom_num, sc*(paramp["pixeltomm"]**2)/cross_section)
+                atom_num = np.append(atom_num, sc*(param["pixeltomm"]**2)/cross_section)
 
         return atom_num
 
@@ -109,10 +110,10 @@ class atomnumanalysis:
 
 
 filepath = "C:/Users/dur!p5/github/pixelfly-python-control/saved_images/"
-filename = "images_20210805.hdf"
+filename = "images_20210922.hdf"
 fname = filepath + filename
-gname = "run_20210805_192343"
-detuning =  14 # in MHz
+gname = "rfabsrp_lambda_20210922_190640"
+detuning = 26 # in MHz
 
 # calculate and plot temperature, inital rms radius, reduced \chi^2, 1-CDF(\chi^2)
 # indicate uncertainties at "confidence_band" confidence level
