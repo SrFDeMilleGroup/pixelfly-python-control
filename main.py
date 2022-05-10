@@ -117,7 +117,7 @@ class Scrollarea(qt.QGroupBox):
             self.frame = qt.QHBoxLayout()
         else:
             self.frame = qt.QGridLayout()
-            print("Frame type not supported!")
+            logging.warning("Frame type not supported!")
 
         box.setLayout(self.frame)
 
@@ -162,7 +162,7 @@ class TcpThread(PyQt5.QtCore.QThread):
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_sock.bind((self.host, self.port))
         self.server_sock.listen()
-        print("listening on", (self.host, self.port))
+        logging.info("listening on", (self.host, self.port))
         self.server_sock.setblocking(False)
         self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
 
@@ -178,7 +178,7 @@ class TcpThread(PyQt5.QtCore.QThread):
                     try:
                         data = s.recv(1024) # 1024 bytes should be enough for our data
                     except Exception as err:
-                        print(f"TCP connection error: \n{err}")
+                        logging.error(f"TCP connection error: \n{err}")
                         continue
                     if data:
                         self.data += data
@@ -189,7 +189,7 @@ class TcpThread(PyQt5.QtCore.QThread):
                                 self.data = self.data[4:]
                             elif self.length_get and len(self.data) >= self.length:
                                 message = self.data.decode('utf-8')
-                                # print(message)
+                                # logging.info(message)
                                 with open(self.parent.defaults["scan_file_name"]["default"], "w") as f:
                                     f.write(message)
                                 t = time.time()
@@ -203,7 +203,7 @@ class TcpThread(PyQt5.QtCore.QThread):
                                 break
                     else:
                         # empty data will be interpreted as the signal of client shutting down
-                        print("client shutting down...")
+                        logging.info("client shutting down...")
                         self.sel.unregister(s)
                         s.close()
                         self.length_get = False
@@ -215,7 +215,7 @@ class TcpThread(PyQt5.QtCore.QThread):
 
     def accept_wrapper(self, sock):
         conn, addr = sock.accept()  # Should be ready to read
-        print("accepted connection from", addr)
+        logging.info("accepted connection from", addr)
         conn.setblocking(False)
         self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
         return_dict = {"client addr": addr}
@@ -286,7 +286,7 @@ class CamThread(PyQt5.QtCore.QThread):
                         image_post = np.divide(image, self.image_bg)
                         image_post = -np.log(image_post)
                     else:
-                        print("Measurement type not supported.")
+                        logging.warning("Measurement type not supported.")
                         return
 
                     image_post_chop = image_post[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
@@ -326,13 +326,13 @@ class CamThread(PyQt5.QtCore.QThread):
                     self.signal.emit(self.img_dict)
 
                 else:
-                    print("Image type not supported.")
+                    logging.warning("Image type not supported.")
 
                 # If I call "update imge" function here to update images in main thread, it sometimes work but sometimes not.
                 # It may be because PyQt is not thread safe. A signal-slot way seemed to be preferred,
                 # e.g. https://stackoverflow.com/questions/54961905/real-time-plotting-using-pyqtgraph-and-threading
 
-                print(f"image {self.counter}: "+"{:.5f} s".format(time.time()-self.last_time))
+                logging.info(f"image {self.counter}: "+"{:.5f} s".format(time.time()-self.last_time))
 
         # stop the camera after taking required number of images.
         self.parent.device.cam.stop()
@@ -865,7 +865,7 @@ class Control(Scrollarea):
         elif self.meas_mode == "absorption":
             self.parent.image_win.img_tab.setCurrentIndex(3) # switch to absorption plot tab
         else:
-            print("Measurement mode not supported.")
+            logging.warning("Measurement mode not supported.")
             return
 
         # initialize a image taking thread
@@ -907,7 +907,7 @@ class Control(Scrollarea):
             elif self.meas_mode == "absorption":
                 self.parent.image_win.imgs_dict["Optical density"].setImage(img)
             else:
-                print("Measurement type not supported")
+                logging.warning("Measurement type not supported")
                 return
 
             img = img_dict["image_post"]
@@ -1095,7 +1095,7 @@ class Control(Scrollarea):
         elif change_type == "time":
             pass
         else:
-            print("set_expo_time: invalid change_type")
+            logging.warning("set_expo_time: invalid change_type")
             return
 
         t = time*unit_num
@@ -1113,7 +1113,7 @@ class Control(Scrollarea):
             y_max = (self.parent.defaults["sensor_format"].getint(format_str+"ymax"))/int(bin_v)
             self.y_max_sb.setMaximum(int(y_max))
         else:
-            print("Binning type not supported.")
+            logging.warning("Binning type not supported.")
 
         self.parent.device.set_binning(bin_h, bin_v)
         self.parent.device.set_image_shape()
