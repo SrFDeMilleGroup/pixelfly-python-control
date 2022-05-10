@@ -21,6 +21,7 @@ import selectors
 import struct
 from collections import deque
 
+from widgets import NewSpinBox, NewDoubleSpinBox, NewComboBox
 
 # steal colormap data from matplotlib
 def steal_colormap(colorname="viridis", lut=6):
@@ -28,7 +29,7 @@ def steal_colormap(colorname="viridis", lut=6):
     colordata = color(range(lut)) # (r, g, b, a=opacity)
     colordata_reform = []
     for i in range(lut):
-        l = [i/lut, tuple(colordata[i]*255)]
+        l = [i/lut, tuple([int(x*255) for x in colordata[i]])]
         colordata_reform.append(tuple(l))
 
     return colordata_reform
@@ -88,71 +89,6 @@ def gaussianfit(data):
     p_dict["offset"] = p[5]
 
     return p_dict
-
-# a spinbox that won't respond if the mouse just hovers over it and scrolls the wheel,
-# it will respond if it's clicked and gets focus
-# the purpose is to avoid accidental value change
-class newSpinBox(qt.QSpinBox):
-    def __init__(self, range=None, stepsize=None, suffix=None):
-        super().__init__()
-        # mouse hovering over this widget and scrolling the wheel won't bring focus into it
-        # mouse can bring focus to this widget by clicking it
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-        # 0 != None
-        # don't use "if not range:" statement, in case range is set to zero
-        if range != None:
-            self.setRange(range[0], range[1])
-        if stepsize != None:
-            self.setSingleStep(stepsize)
-        if suffix != None:
-            self.setSuffix(suffix)
-
-        # scroll event and up/down button still emit valuechanged signal,
-        # but typing value through keyboard only emits valuecahnged signal when enter is pressed or focus is lost
-        self.setKeyboardTracking(False)
-
-    # modify wheelEvent so this widget only responds when it has focus
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            # if the event is ignored, it will be passed to and handled by parent widget
-            event.ignore()
-
-# modify QDoubleSpinBox for the same reason as modifying QSpinBox, see comments for newSpinBox class
-class newDoubleSpinBox(qt.QDoubleSpinBox):
-    def __init__(self, range=None, decimal=None, stepsize=None, suffix=None):
-        super().__init__()
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-
-        if range != None:
-            self.setRange(range[0], range[1])
-        if decimal != None:
-            self.setDecimals(decimal)
-        if stepsize != None:
-            self.setSingleStep(stepsize)
-        if suffix != None:
-            self.setSuffix(suffix)
-
-        self.setKeyboardTracking(False)
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-# modify QComboBox for the same reason as modifying QSpinBox, see comments for newSpinBox class
-class newComboBox(qt.QComboBox):
-    def __init__(self):
-        super().__init__()
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
 
 # create a scroll area of a specific layout, e.g. form, grid, vbox, etc
 class Scrollarea(qt.QGroupBox):
@@ -583,15 +519,15 @@ class Control(Scrollarea):
 
         # a spinbox to set number of images to take in next run
         num_img_upperlimit = self.parent.defaults["image_number"].getint("max")
-        self.num_img_to_take_sb = newSpinBox(range=(1, num_img_upperlimit), stepsize=1, suffix=None)
+        self.num_img_to_take_sb = NewSpinBox(range=(1, num_img_upperlimit), suffix=None)
         self.num_img_to_take_sb.setValue(self.num_img_to_take)
         self.num_img_to_take_sb.valueChanged[int].connect(lambda val: self.set_num_img(val))
         img_ctrl_frame.addRow("Num of image to take:", self.num_img_to_take_sb)
 
         # spinboxes to set image region of interest in x
-        self.x_min_sb = newSpinBox(range=(0, self.roi["xmax"]-1), stepsize=1, suffix=None)
+        self.x_min_sb = NewSpinBox(range=(0, self.roi["xmax"]-1), suffix=None)
         self.x_min_sb.setValue(self.roi["xmin"])
-        self.x_max_sb = newSpinBox(range=(self.roi["xmin"]+1, self.parent.device.image_shape["xmax"]), stepsize=1, suffix=None)
+        self.x_max_sb = NewSpinBox(range=(self.roi["xmin"]+1, self.parent.device.image_shape["xmax"]), suffix=None)
         self.x_max_sb.setValue(self.roi["xmax"])
         self.x_min_sb.valueChanged[int].connect(lambda val, text='xmin', sb=self.x_max_sb:
                                                 self.set_roi(text, val, sb))
@@ -607,9 +543,9 @@ class Control(Scrollarea):
         img_ctrl_frame.addRow("ROI X range:", x_range_box)
 
         # spinboxes to set image region of interest in y
-        self.y_min_sb = newSpinBox(range=(0, self.roi["ymax"]-1), stepsize=1, suffix=None)
+        self.y_min_sb = NewSpinBox(range=(0, self.roi["ymax"]-1), suffix=None)
         self.y_min_sb.setValue(self.roi["ymin"])
-        self.y_max_sb = newSpinBox(range=(self.roi["ymin"]+1, self.parent.device.image_shape["ymax"]), stepsize=1, suffix=None)
+        self.y_max_sb = NewSpinBox(range=(self.roi["ymin"]+1, self.parent.device.image_shape["ymax"]), suffix=None)
         self.y_max_sb.setValue(self.roi["ymax"])
         self.y_min_sb.valueChanged[int].connect(lambda val, text='ymin', sb=self.y_max_sb:
                                                 self.set_roi(text, val, sb))
@@ -720,37 +656,34 @@ class Control(Scrollarea):
         self.frame.addWidget(self.cam_ctrl_box)
 
         # set sensor format
-        self.sensor_format_cb = newComboBox()
+        self.sensor_format_cb = NewComboBox()
         self.sensor_format_cb.setToolTip("Customized format doesn't reduce active CCD size, but crops images in software.")
         self.sensor_format_cb.setMaximumWidth(200)
         self.sensor_format_cb.setMaximumHeight(20)
         op = [x.strip() for x in self.parent.defaults["sensor_format"]["options"].split(',')]
-        for i in op:
-            self.sensor_format_cb.addItem(i)
+        self.sensor_format_cb.addItems(op)
         self.sensor_format_cb.setCurrentText(self.parent.device.sensor_format)
         self.sensor_format_cb.currentTextChanged[str].connect(lambda val: self.set_sensor_format(val))
         cam_ctrl_frame.addRow("Sensor format:", self.sensor_format_cb)
 
         # set clock rate
-        self.clock_rate_cb = newComboBox()
+        self.clock_rate_cb = NewComboBox()
         self.clock_rate_cb.setMaximumWidth(200)
         self.clock_rate_cb.setMaximumHeight(20)
         op = [x.strip() for x in self.parent.defaults["clock_rate"]["options"].split(',')]
-        for i in op:
-            self.clock_rate_cb.addItem(i)
+        self.clock_rate_cb.addItems(op)
         default = self.parent.defaults["clock_rate"]["default"]
         self.clock_rate_cb.setCurrentText(default)
         self.clock_rate_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_clock_rate(val))
         cam_ctrl_frame.addRow("Clock rate:", self.clock_rate_cb)
 
         # set conversion factor
-        self.conv_factor_cb = newComboBox()
+        self.conv_factor_cb = NewComboBox()
         self.conv_factor_cb.setMaximumWidth(200)
         self.conv_factor_cb.setMaximumHeight(20)
         self.conv_factor_cb.setToolTip("1/gain, or electrons/count")
         op = [x.strip() for x in self.parent.defaults["conv_factor"]["options"].split(',')]
-        for i in op:
-            self.conv_factor_cb.addItem(i)
+        self.conv_factor_cb.addItems(op)
         default = self.parent.defaults["conv_factor"]["default"]
         self.conv_factor_cb.setCurrentText(default)
         self.conv_factor_cb.currentTextChanged[str].connect(lambda val: self.parent.device.set_conv_factor(val))
@@ -779,13 +712,12 @@ class Control(Scrollarea):
         default_unit = self.parent.defaults["expo_unit"]["default"]
         default_unit_num = self.parent.defaults["expo_unit"].getfloat(default_unit)
         default_time = expo_cf.getfloat("default")/default_unit_num
-        self.expo_dsb = newDoubleSpinBox(range=(expo_cf.getfloat("min")/default_unit_num, expo_cf.getfloat("max")/default_unit_num), decimal=int(expo_cf.getint("decimals")+np.log10(default_unit_num)), stepsize=1)
+        self.expo_dsb = NewDoubleSpinBox(range=(expo_cf.getfloat("min")/default_unit_num, expo_cf.getfloat("max")/default_unit_num), decimals=int(expo_cf.getint("decimals")+np.log10(default_unit_num)))
         self.expo_dsb.setValue(default_time)
-        self.expo_unit_cb = newComboBox()
+        self.expo_unit_cb = NewComboBox()
         self.expo_unit_cb.setMaximumHeight(30)
         op = [x.strip() for x in self.parent.defaults["expo_unit"]["options"].split(',')]
-        for i in op:
-            self.expo_unit_cb.addItem(i)
+        self.expo_unit_cb.addItems(op)
         self.expo_unit_cb.setCurrentText(default_unit)
         self.expo_dsb.valueChanged[float].connect(lambda val, cb=self.expo_unit_cb, type="time":
                                             self.set_expo_time(val, cb.currentText(), type))
@@ -800,12 +732,11 @@ class Control(Scrollarea):
         cam_ctrl_frame.addRow("Exposure time:", expo_box)
 
         # set binning
-        self.bin_hori_cb = newComboBox()
-        self.bin_vert_cb = newComboBox()
+        self.bin_hori_cb = NewComboBox()
+        self.bin_vert_cb = NewComboBox()
         op = [x.strip() for x in self.parent.defaults["binning"]["options"].split(',')]
-        for i in op:
-            self.bin_hori_cb.addItem(i)
-            self.bin_vert_cb.addItem(i)
+        self.bin_hori_cb.addItems(op)
+        self.bin_vert_cb.addItems(op)
         self.bin_hori_cb.setCurrentText(str(self.parent.device.binning["horizontal"]))
         self.bin_vert_cb.setCurrentText(str(self.parent.device.binning["vertical"]))
         self.bin_hori_cb.currentTextChanged[str].connect(lambda val, text="hori", cb=self.bin_vert_cb: self.set_binning(text, val, cb.currentText()))

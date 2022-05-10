@@ -2,6 +2,6 @@ __pycache__/
 test/
 saved_images/
 saved_settings/
-scan_sequence/
+scan_sequences/
 to-do-list.md
 defaults.ini

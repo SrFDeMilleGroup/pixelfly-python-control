@@ -62,3 +62,6 @@ Default settings, legitimate choices and some camera specifications are listed i
 
 ## Workflow in a nutshell
 In both **Record** and **Scan** modes, a separate `Qthread` will be launched when image acquiring starts. This `Qthread` will check if a new image is available in the camera and read it out to computer when it is. After some preliminary data processing and information collection, all data will be transferred back to the main thread as a dictionary by Pyqt's signal-slot mechanism. The main thread will do 2D Gaussian fit, image saving and GUI widgets update.  
+
+## Install camera
+Install USB 2.0 driver from the flash drive that ships with the camera, before install other camera softwares.
