@@ -7,6 +7,8 @@ import logging
 import traceback
 import configparser
 import numpy as np
+from matlab_gaussian_filter import matlab_style_gauss2D
+from scipy.ndimage import correlate
 from scipy import optimize
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -21,6 +23,8 @@ import socket
 import selectors
 import struct
 from collections import deque
+
+import scipy
 
 from widgets import NewSpinBox, NewDoubleSpinBox, NewComboBox
 
@@ -313,6 +317,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 elif image_type == "image":
                     if self.bkg_counter > 0:
                         image_post = image - self.ave_bkg
+                        image_post = correlate(image_post,matlab_style_gauss2D((45,45),15))
                         image_post_roi = image_post[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
                                                     self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
                         sc = np.sum(image_post_roi) # signal count
