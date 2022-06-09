@@ -302,6 +302,11 @@ class CamThread(PyQt5.QtCore.QThread):
 
                 image_type = self.scan_config[f"scan_value_{self.counter}"]["image_type"] # "image" or "bkg"
                 self.img_dict = {"image_type": image_type, "image": image, "counter": self.counter, "bkg_counter": self.bkg_counter}
+                if self.parent.control.control_mode == "record":
+                    self.img_dict["scan_param"] = ""
+                if self.parent.control.control_mode == "scan":
+                    scan_param = self.scan_config[f"scan_value_{self.counter}"][self.parent.control.scan_elem_name]
+                    self.img_dict["scan_param"] = scan_param
 
                 if image_type == "bkg":
                     if self.bkg_counter > 0:
@@ -349,7 +354,7 @@ class CamThread(PyQt5.QtCore.QThread):
                         # signal count statistics, mean and error of mean = stand. dev. / sqrt(image number)
                         self.img_dict["signal_count_ave"] = signal_count_ave
                         self.img_dict["signal_count_err"] = signal_count_err
-                        self.img_dict["scan_param"] = ""
+                        # self.img_dict["scan_param"] = ""
 
                     if self.parent.control.control_mode == "scan":
                         scan_param = self.scan_config[f"scan_value_{self.counter}"][self.parent.control.scan_elem_name]
@@ -360,7 +365,7 @@ class CamThread(PyQt5.QtCore.QThread):
                                 self.signal_count_dict[scan_param] = np.array([sc])
 
                         self.img_dict["signal_count_scan"] = self.signal_count_dict
-                        self.img_dict["scan_param"] = scan_param                        
+                        # self.img_dict["scan_param"] = scan_param                        
 
                     self.signal.emit(self.img_dict)
 
