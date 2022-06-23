@@ -271,6 +271,37 @@ class NewScrollArea(qt.QScrollArea):
 
         self.frame = box.frame
 
+# create a scroll area of a specific layout, e.g. form, grid, vbox, etc
+class Scrollarea(qt.QGroupBox):
+    def __init__(self, parent, label="", type="grid"):
+        super().__init__()
+        self.parent = parent
+        self.setTitle(label)
+        outer_layout = qt.QGridLayout()
+        outer_layout.setContentsMargins(0,0,0,0)
+        self.setLayout(outer_layout)
+
+        scroll = qt.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameStyle(0x10) # see https://doc.qt.io/qt-5/qframe.html for different frame styles
+        outer_layout.addWidget(scroll)
+
+        box = qt.QWidget()
+        scroll.setWidget(box)
+        if type == "form":
+            self.frame = qt.QFormLayout()
+        elif type == "grid":
+            self.frame = qt.QGridLayout()
+        elif type == "vbox":
+            self.frame = qt.QVBoxLayout()
+        elif type == "hbox":
+            self.frame = qt.QHBoxLayout()
+        else:
+            self.frame = qt.QGridLayout()
+            logging.warning("Frame type not supported!")
+
+        box.setLayout(self.frame)
+
 # https://github.com/js216/CeNTREX/blob/master/main.py
 class FlexibleGridLayout(qt.QHBoxLayout):
     """A QHBoxLayout of QVBoxLayouts."""
