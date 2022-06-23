@@ -34,7 +34,7 @@ def steal_colormap(colorname="viridis", lut=6):
     colordata = color(range(lut)) # (r, g, b, a=opacity)
     colordata_reform = []
     for i in range(lut):
-        l = [i/lut, tuple([int(x*255) for x in colordata[i]])]
+        l = [i/(lut-1), tuple([int(x*255) for x in colordata[i]])]
         colordata_reform.append(tuple(l))
 
     return colordata_reform
@@ -45,8 +45,8 @@ def fake_data(xmax, ymax):
     y_range=20
     x_center=12
     y_center=16
-    x_err=3
-    y_err=2
+    x_err=5
+    y_err=4
     amp=100
     noise_amp = 10
     x, y = np.meshgrid(np.arange(x_range), np.arange(y_range))
@@ -941,7 +941,10 @@ class Control(Scrollarea):
                 self.rec.wait() #  wait until thread closed
             except AttributeError:
                 pass
-            self.control_mode = None
+
+            # don't reset control_mode to None, bcause img_ctrl_update function for the last image may be called after this function being called
+            # self.control_mode = None
+
             self.enable_widgets(True)
 
     # function that will be called in every experimental cycle to update GUI display
@@ -952,6 +955,8 @@ class Control(Scrollarea):
             img = img_dict["image"]
             # update background image
             self.parent.image_win.imgs_dict["Background"].setImage(img)
+
+            self.num_image.setText(str(img_dict["counter"]+1))
 
         elif img_type == "image":
             # update signal images
