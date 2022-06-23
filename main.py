@@ -1365,7 +1365,7 @@ class ImageWin(Scrollarea):
         for i, name in enumerate(self.imgs_name):
             graphlayout = pg.GraphicsLayoutWidget(parent=self, border=True)
             self.img_tab.addTab(graphlayout, " "+name+" ")
-            plot = graphlayout.addPlot(title=name)
+            plot = graphlayout.addPlot(row=1, col=1, rowspan=2, colspan=1, title=name)
             img = pg.ImageItem(lockAspect=True)
             plot.addItem(img)
 
@@ -1399,7 +1399,16 @@ class ImageWin(Scrollarea):
             # add histogram/colorbar
             hist = pg.HistogramLUTItem()
             hist.setImageItem(img)
-            graphlayout.addItem(hist)
+
+            # add a pyqt widget to graphlayout
+            # https://stackoverflow.com/questions/45184941/how-do-i-add-a-qpushbutton-to-pyqtgraph-using-additem
+            proxy = QtGui.QGraphicsProxyWidget()
+            chb = QtGui.QCheckBox("Auto scale color")
+            proxy.setWidget(chb)
+            graphlayout.addItem(hist, row=1, col=2)
+            graphlayout.addItem(proxy, row=2, col=2)
+            chb.setEnabled(False)
+
             hist.gradient.restoreState({'mode': 'rgb', 'ticks': self.colormap})
 
             self.data = fake_data(self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"])
