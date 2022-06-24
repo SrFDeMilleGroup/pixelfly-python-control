@@ -387,7 +387,7 @@ class Control(Scrollarea):
                     "ymin": self.parent.defaults["roi"].getint("ymin"),
                     "ymax": self.parent.defaults["roi"].getint("ymax")}
 
-        # boolean variables
+        # gaussian filter settings
         self.gaussian_fit = self.parent.defaults["gaussian_fit"].getboolean("default")
         self.gaussian_filter = self.parent.defaults["gaussian_filter"].getboolean("state")
         self.gaussian_filter_shape_x = self.parent.defaults["gaussian_filter"].getint("shape_x")
@@ -414,7 +414,11 @@ class Control(Scrollarea):
         self.place_cam_control()
         self.place_tcp_control()
         self.place_save_load()
-        self.tcp_start()
+
+        # don't start tcp thread here, 
+        # it will be started when the program load latest setting (using load_settings(latest=true))
+        
+        # self.tcp_start()
 
     # place recording gui elements
     def place_recording(self):
@@ -563,22 +567,23 @@ class Control(Scrollarea):
         img_ctrl_frame.addRow("gaussian filter:", self.gauss_filter_chb)
 
         # spinboxes to set gaussian filter shapes
-        self.gaussian_filter_x_sb = NewSpinBox(range=(0, 10000), suffix=None)
-        self.gaussian_filter_x_sb.setValue(self.gaussian_filter_shape_x)
-        self.gaussian_filter_y_sb = NewSpinBox(range=(0, 10000), suffix=None)
-        self.gaussian_filter_y_sb.setValue(self.gaussian_filter_shape_y)
-        self.gaussian_filter_x_sb.valueChanged[int].connect(lambda val, param="shape_x": self.set_gauss_filter(val, param))
-        self.gaussian_filter_y_sb.valueChanged[int].connect(lambda val, param="shape_y": self.set_gauss_filter(val, param))
+        self.gauss_filter_shape_x_sb = NewSpinBox(range=(1, 10000), suffix=None)
+        self.gauss_filter_shape_x_sb.setValue(self.gaussian_filter_shape_x)
+        self.gauss_filter_shape_y_sb = NewSpinBox(range=(1, 10000), suffix=None)
+        self.gauss_filter_shape_y_sb.setValue(self.gaussian_filter_shape_y)
+        self.gauss_filter_shape_x_sb.valueChanged[int].connect(lambda val, param="shape_x": self.set_gauss_filter(val, param))
+        self.gauss_filter_shape_y_sb.valueChanged[int].connect(lambda val, param="shape_y": self.set_gauss_filter(val, param))
 
         gaussian_filter_shape_box = qt.QWidget()
         gaussian_filter_shape_layout = qt.QHBoxLayout()
         gaussian_filter_shape_layout.setContentsMargins(0,0,0,0)
         gaussian_filter_shape_box.setLayout(gaussian_filter_shape_layout)
-        gaussian_filter_shape_layout.addWidget(self.gaussian_filter_x_sb)
-        gaussian_filter_shape_layout.addWidget(self.gaussian_filter_y_sb)
+        gaussian_filter_shape_layout.addWidget(self.gauss_filter_shape_x_sb)
+        gaussian_filter_shape_layout.addWidget(self.gauss_filter_shape_y_sb)
         img_ctrl_frame.addRow("gaussian filter shape:", gaussian_filter_shape_box)
 
-        self.gaussian_filter_sigma_dsb = NewDoubleSpinBox(range=(0, 10000), decimals=2, suffix=None)
+        # spinboxes to set gaussian filter sigma
+        self.gaussian_filter_sigma_dsb = NewDoubleSpinBox(range=(0.01, 10000), decimals=2, suffix=None)
         self.gaussian_filter_sigma_dsb.setValue(self.gaussian_filter_sigma)
         self.gaussian_filter_sigma_dsb.valueChanged[float].connect(lambda val, param="sigma": self.set_gauss_filter(val, param))
         img_ctrl_frame.addRow("gaussian filter sigma:", self.gaussian_filter_sigma_dsb)
@@ -820,7 +825,7 @@ class Control(Scrollarea):
         # clear images
         img = np.zeros((self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]))
         for key, image_show in self.parent.image_win.imgs_dict.items():
-            image_show.setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict[key].isChecked())
+            image_show.setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict[key])
         self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
         self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
         self.parent.image_win.ave_img.setImage(img, autoLevels=self.parent.image_win.ave_img_auto_scale_chb.isChecked())
@@ -905,20 +910,20 @@ class Control(Scrollarea):
         if img_type == "bkg":
             img = img_dict["image"]
             # update background image
-            self.parent.image_win.imgs_dict["Background"].setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict["Background"].isChecked())
+            self.parent.image_win.imgs_dict["Background"].setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict["Background"])
 
             self.num_image.setText(str(img_dict["counter"]+1))
 
         elif img_type == "image":
             # update signal images
             img = img_dict["image"]
-            self.parent.image_win.imgs_dict["Raw Signal"].setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict["Raw Signal"].isChecked())
+            self.parent.image_win.imgs_dict["Raw Signal"].setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict["Raw Signal"])
 
             # img = img_dict["image_post"]
             # if self.meas_mode == "fluorescence":
-            #     self.parent.image_win.imgs_dict["Signal minus ave bkg"].setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict["Signal minus ave bkg"].isChecked())
+            #     self.parent.image_win.imgs_dict["Signal minus ave bkg"].setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict["Signal minus ave bkg"])
             # elif self.meas_mode == "absorption":
-            #     self.parent.image_win.imgs_dict["Optical density"].setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict["Optical density"].isChecked())
+            #     self.parent.image_win.imgs_dict["Optical density"].setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict["Optical density"])
             # else:
             #     logging.warning("Measurement type not supported")
             #     return
@@ -927,7 +932,7 @@ class Control(Scrollarea):
 
             if img_dict["bkg_counter"] > 0:
                 img = img_dict["image_post"]
-                self.parent.image_win.imgs_dict["Signal minus ave bkg"].setImage(img, autoLevels=self.parent.image_win.auto_scale_chb_dict["Signal minus ave bkg"].isChecked())
+                self.parent.image_win.imgs_dict["Signal minus ave bkg"].setImage(img, autoLevels=self.parent.image_win.auto_scale_state_dict["Signal minus ave bkg"])
                 self.parent.image_win.x_plot_curve.setData(np.sum(img, axis=1))
                 self.parent.image_win.y_plot_curve.setData(np.sum(img, axis=0))
 
@@ -941,7 +946,7 @@ class Control(Scrollarea):
                 self.parent.image_win.sc_plot_curve.setData(np.array(self.signal_count_deque), symbol='o')
 
                 if self.control_mode == "record":
-                    self.parent.image_win.ave_img.setImage(img_dict["image_ave"], autoLevels=self.parent.image_win.ave_img_auto_scale_chb.isChecked())
+                    self.parent.image_win.ave_img.setImage(img_dict["image_ave"], autoLevels=self.parent.image_win.ave_img_auto_scale_state)
                     self.signal_count_mean.setText(np.format_float_scientific(img_dict["signal_count_ave"], precision=4))
                     self.signal_count_err_mean.setText(np.format_float_scientific(img_dict["signal_count_err"], precision=4))
                 elif self.control_mode == "scan":
@@ -1081,11 +1086,11 @@ class Control(Scrollarea):
                 self.gauss_fit_chb.setEnabled(True)
 
     def set_gauss_fit(self, state):
-        self.gaussian_fit = state
+        self.gaussian_fit = bool(state)
 
     def set_gauss_filter(self, val, param):
         if param == "state":
-            self.gaussian_filter = val
+            self.gaussian_filter = bool(val)
         elif param == "shape_x":
             self.gaussian_filter_shape_x = val
         elif param == "shape_y":
@@ -1185,28 +1190,32 @@ class Control(Scrollarea):
         if addr:
             self.client_addr_la.setText(dict["client addr"][0]+" ("+str(dict["client addr"][1])+")")
 
-    def save_settings(self):
+    def save_settings(self, latest=False):
+        if latest:
+            file_name = "program_setting_latest.ini"
+        else:
         # compile file name
-        file_name = ""
-        if self.file_name_le.text():
-            file_name += self.file_name_le.text()
-        if self.date_time_chb.isChecked():
-            if file_name != "":
-                file_name += "_"
-            file_name += time.strftime("%Y%m%d_%H%M%S")
-        file_name += ".ini"
-        file_name = r"saved_settings/"+file_name
+            file_name = ""
+            if self.file_name_le.text():
+                file_name += self.file_name_le.text()
+            if self.date_time_chb.isChecked():
+                if file_name != "":
+                    file_name += "_"
+                file_name += time.strftime("%Y%m%d_%H%M%S")
+            file_name += ".ini"
+            file_name = r"saved_settings/"+file_name
 
-        # check if the file name already exists
-        if os.path.exists(file_name):
-            overwrite = qt.QMessageBox.warning(self, 'File name exists',
-                                            'File name already exists. Continue to overwrite it?',
-                                            qt.QMessageBox.Yes | qt.QMessageBox.No,
-                                            qt.QMessageBox.No)
-            if overwrite == qt.QMessageBox.No:
-                return
+            # check if the file name already exists
+            if os.path.exists(file_name):
+                overwrite = qt.QMessageBox.warning(self, 'File name exists',
+                                                'File name already exists. Continue to overwrite it?',
+                                                qt.QMessageBox.Yes | qt.QMessageBox.No,
+                                                qt.QMessageBox.No)
+                if overwrite == qt.QMessageBox.No:
+                    return
 
         config = configparser.ConfigParser()
+        config.optionxform = str
 
         config["record_control"] = {}
         config["record_control"]["meas_mode"] = self.meas_mode
@@ -1217,10 +1226,17 @@ class Control(Scrollarea):
         config["image_control"]["xmax"] = str(self.x_max_sb.value())
         config["image_control"]["ymin"] = str(self.y_min_sb.value())
         config["image_control"]["ymax"] = str(self.y_max_sb.value())
-        config["image_control"]["2D_gaussian_fit"] = str(self.gauss_fit_chb.isChecked())
+        config["image_control"]["2D_gaussian_fit"] = str(self.gaussian_fit)
         config["image_control"]["run_name"] = self.run_name_le.text()
         config["image_control"]["image_auto_save"] = str(self.img_save_chb.isChecked())
-
+        config["image_control"]["gaussian_filter"] = str(self.gaussian_filter)
+        config["image_control"]["gaussian_filter_shape_x"] = str(self.gaussian_filter_shape_x)
+        config["image_control"]["gaussian_filter_shape_y"] = str(self.gaussian_filter_shape_y)
+        config["image_control"]["gaussian_filter_sigma"] = str(self.gaussian_filter_sigma)
+        for name in self.parent.image_win.imgs_name:
+            config["image_control"][f"auto_scale_state_{name}"] = str(self.parent.image_win.auto_scale_state_dict[name])
+        config["image_control"]["auto_scale_state_Average_image"] = str(self.parent.image_win.ave_img_auto_scale_state)
+        
         config["camera_control"] = {}
         config["camera_control"]["sensor_format"] = self.sensor_format_cb.currentText()
         config["camera_control"]["clock_rate"] = self.clock_rate_cb.currentText()
@@ -1241,14 +1257,22 @@ class Control(Scrollarea):
         config.write(configfile)
         configfile.close()
 
-    def load_settings(self):
-        # open a file dialog to choose a configuration file to load
-        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
-        if not file_name:
-            return
+    def load_settings(self, latest=False):
+        if latest:
+            try:
+                config = configparser.ConfigParser()
+                config.read("program_setting_latest.ini")
+            except KeyError:
+                # could not find file
+                return
+        else:
+            # open a file dialog to choose a configuration file to load
+            file_name, _ = qt.QFileDialog.getOpenFileName(self, "Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
+            if not file_name:
+                return
 
-        config = configparser.ConfigParser()
-        config.read(file_name)
+            config = configparser.ConfigParser()
+            config.read(file_name)
 
         for i in self.meas_rblist:
             if i.text() == config["record_control"]["meas_mode"]:
@@ -1266,6 +1290,15 @@ class Control(Scrollarea):
         # the combobox emits 'stateChanged' signal, and its connected function will be called
         self.img_save_chb.setChecked(config["image_control"].getboolean("image_auto_save"))
         self.run_name_le.setText(config["image_control"].get("run_name"))
+
+        self.gauss_filter_chb.setChecked(config["image_control"].getboolean("gaussian_filter"))
+        self.gauss_filter_shape_x_sb.setValue(config["image_control"].getint("gaussian_filter_shape_x"))
+        self.gauss_filter_shape_y_sb.setValue(config["image_control"].getint("gaussian_filter_shape_y"))
+        self.gaussian_filter_sigma_dsb.setValue(config["image_control"].getfloat("gaussian_filter_sigma"))
+
+        for name in self.parent.image_win.imgs_name:
+            self.parent.image_win.auto_scale_chb_dict[name].setChecked(config["image_control"].getboolean(f"auto_scale_state_{name}"))
+        self.parent.image_win.ave_img_auto_scale_chb.setChecked(config["image_control"].getboolean("auto_scale_state_Average_image"))
 
         self.sensor_format_cb.setCurrentText(config["camera_control"]["sensor_format"])
         # the combobox emits 'currentTextChanged' signal, and its connected function will be called
@@ -1308,7 +1341,12 @@ class ImageWin(Scrollarea):
         self.imgs_dict = {}
         self.img_roi_dict = {}
         self.auto_scale_chb_dict = {}
+        self.auto_scale_state_dict = {}
         self.imgs_name = ["Background", "Raw Signal", "Signal minus ave bkg", "Optical density"]
+
+        for name in self.imgs_name:
+            self.auto_scale_state_dict[name] = self.parent.defaults.getboolean("image_auto_scale", name)
+        self.ave_img_auto_scale_state = self.parent.defaults.getboolean("image_auto_scale", "Average image")
 
         # place images and plots
         self.place_sgn_imgs()
@@ -1341,7 +1379,8 @@ class ImageWin(Scrollarea):
             imgwidget.img_roi.sigRegionChanged.connect(lambda roi=imgwidget.img_roi: self.img_roi_update(roi))
             imgwidget.img_roi.setBounds(pos=[0,0], size=[self.parent.device.image_shape["xmax"], self.parent.device.image_shape["ymax"]])
 
-            imgwidget.chb.setChecked(self.parent.defaults.getboolean("image_auto_scale_chb", name))
+            imgwidget.chb.setChecked(self.auto_scale_state_dict[name])
+            imgwidget.chb.stateChanged[int].connect(lambda val, param=name: self.set_auto_scale(val, param))
 
             self.img_roi_dict[name] = imgwidget.img_roi
             self.imgs_dict[name] = imgwidget.img
@@ -1440,7 +1479,8 @@ class ImageWin(Scrollarea):
         self.ave_scan_tab.addTab(imgwidget.graphlayout, " "+name+" ")
         self.ave_img = imgwidget.img
         self.ave_img_auto_scale_chb = imgwidget.chb
-        self.ave_img_auto_scale_chb.setChecked(self.parent.defaults.getboolean("image_auto_scale_chb", "Average image"))
+        self.ave_img_auto_scale_chb.setChecked(self.ave_img_auto_scale_state)
+        self.ave_img_auto_scale_chb.stateChanged[int].connect(lambda val, param="Average image": self.set_auto_scale(val, param))
 
     # place scan plots
     def place_scan_plot(self):
@@ -1505,6 +1545,15 @@ class ImageWin(Scrollarea):
         self.parent.control.y_min_sb.setValue(round(y_min))
         self.parent.control.y_max_sb.setValue(round(y_max))
 
+    def set_auto_scale(self, val, param):
+        # logging.info(str(val))
+        if param == "Average image":
+            self.ave_img_auto_scale_state = bool(val)
+        elif param in self.imgs_name:
+            self.auto_scale_state_dict[param] = bool(val)
+        else:
+            logging.warning(f"Unsupported auto scale param: {param}.")
+
 # main class, parent of other classes
 class CameraGUI(qt.QMainWindow):
     def __init__(self, app):
@@ -1524,6 +1573,9 @@ class CameraGUI(qt.QMainWindow):
         self.control = Control(self)
         self.image_win = ImageWin(self)
 
+        # load latest settings
+        self.control.load_settings(latest=True)
+
         self.splitter = qt.QSplitter()
         self.splitter.setOrientation(PyQt5.QtCore.Qt.Horizontal)
         self.setCentralWidget(self.splitter)
@@ -1535,6 +1587,7 @@ class CameraGUI(qt.QMainWindow):
 
     def closeEvent(self, event):
         if not self.control.active:
+            self.control.save_settings(latest=True)
             super().closeEvent(event)
 
         else:
@@ -1544,6 +1597,7 @@ class CameraGUI(qt.QMainWindow):
                                 qt.QMessageBox.Yes | qt.QMessageBox.No,
                                 qt.QMessageBox.No)
             if ans == qt.QMessageBox.Yes:
+                self.control.save_settings(latest=True)
                 super().closeEvent(event)
             else:
                 event.ignore()
