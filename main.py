@@ -36,7 +36,9 @@ def gaussianfit(data):
     total = np.sum(data)
     X, Y = np.indices(data.shape)
     x_mean = np.sum(X*data)/total
+    x_mean = np.clip(x_mean, 0, data.shape[0]-1) # coerce x_mean to data shape
     y_mean = np.sum(Y*data)/total
+    y_mean = np.clip(y_mean, 0, data.shape[1]-1) # coerce y_mean to data shape
     col = data[:, int(y_mean)]
     x_width = np.sqrt(np.abs((np.arange(col.size)-x_mean)**2*col).sum()/col.sum())
     row = data[int(x_mean), :]
@@ -292,7 +294,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 # It may be because PyQt is not thread safe. A signal-slot way seemed to be preferred,
                 # e.g. https://stackoverflow.com/questions/54961905/real-time-plotting-using-pyqtgraph-and-threading
 
-                logging.info(f"image {self.counter}: "+"{:.5f} s".format(time.time()-self.last_time))
+                logging.info(f"image {self.counter+1}: "+"{:.5f} s".format(time.time()-self.last_time))
                 self.counter += 1
 
         # stop the camera after taking required number of images.
@@ -1020,7 +1022,7 @@ class Control(Scrollarea):
                 dset.attrs["IMAGE_SUBCLASS"] = np.string_("IMAGE_GRAYSCALE")
                 dset.attrs["IMAGE_WHITE_IS_ZERO"] = 0
 
-                if self.gaussian_fit:
+                if self.gaussian_fit and (img_type == "image"):
                     for key, val in param.items():
                         dset.attrs["2D gaussian fit"+key] = val
 
