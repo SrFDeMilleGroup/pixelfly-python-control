@@ -5,8 +5,7 @@ import logging
 import traceback
 import configparser
 import numpy as np
-from matlab_gaussian_filter import matlab_style_gauss2D
-from scipy.ndimage import correlate
+from scipy.ndimage import gaussian_filter
 from scipy import optimize
 import PyQt5
 import pyqtgraph as pg
@@ -236,9 +235,7 @@ class CamThread(PyQt5.QtCore.QThread):
                     if self.bkg_counter > 0:
                         image_post = image - self.ave_bkg
                         if self.parent.control.gaussian_filter:
-                            image_post = correlate(image_post,matlab_style_gauss2D((self.parent.control.gaussian_filter_shape_x, 
-                                                                                    self.parent.control.gaussian_filter_shape_y), 
-                                                                                    self.parent.control.gaussian_filter_sigma))
+                            image_post = gaussian_filter(image_post, self.parent.control.gaussian_filter_sigma)
 
                         image_post_roi = image_post[self.parent.control.roi["xmin"] : self.parent.control.roi["xmax"],
                                                     self.parent.control.roi["ymin"] : self.parent.control.roi["ymax"]]
@@ -392,8 +389,6 @@ class Control(Scrollarea):
         # gaussian filter settings
         self.gaussian_fit = self.parent.defaults["gaussian_fit"].getboolean("default")
         self.gaussian_filter = self.parent.defaults["gaussian_filter"].getboolean("state")
-        self.gaussian_filter_shape_x = self.parent.defaults["gaussian_filter"].getint("shape_x")
-        self.gaussian_filter_shape_y = self.parent.defaults["gaussian_filter"].getint("shape_y")
         self.gaussian_filter_sigma = self.parent.defaults["gaussian_filter"].getfloat("sigma")
 
         self.img_save = self.parent.defaults["image_save"].getboolean("default")
@@ -567,22 +562,6 @@ class Control(Scrollarea):
         self.gauss_filter_chb.setStyleSheet("QCheckBox::indicator {width: 15px; height: 15px;}")
         self.gauss_filter_chb.stateChanged[int].connect(lambda val, param="state": self.set_gauss_filter(val, param))
         img_ctrl_frame.addRow("gaussian filter:", self.gauss_filter_chb)
-
-        # spinboxes to set gaussian filter shapes
-        self.gauss_filter_shape_x_sb = NewSpinBox(range=(1, 10000), suffix=None)
-        self.gauss_filter_shape_x_sb.setValue(self.gaussian_filter_shape_x)
-        self.gauss_filter_shape_y_sb = NewSpinBox(range=(1, 10000), suffix=None)
-        self.gauss_filter_shape_y_sb.setValue(self.gaussian_filter_shape_y)
-        self.gauss_filter_shape_x_sb.valueChanged[int].connect(lambda val, param="shape_x": self.set_gauss_filter(val, param))
-        self.gauss_filter_shape_y_sb.valueChanged[int].connect(lambda val, param="shape_y": self.set_gauss_filter(val, param))
-
-        gaussian_filter_shape_box = qt.QWidget()
-        gaussian_filter_shape_layout = qt.QHBoxLayout()
-        gaussian_filter_shape_layout.setContentsMargins(0,0,0,0)
-        gaussian_filter_shape_box.setLayout(gaussian_filter_shape_layout)
-        gaussian_filter_shape_layout.addWidget(self.gauss_filter_shape_x_sb)
-        gaussian_filter_shape_layout.addWidget(self.gauss_filter_shape_y_sb)
-        img_ctrl_frame.addRow("gaussian filter shape:", gaussian_filter_shape_box)
 
         # spinboxes to set gaussian filter sigma
         self.gaussian_filter_sigma_dsb = NewDoubleSpinBox(range=(0.01, 10000), decimals=2, suffix=None)
@@ -1093,10 +1072,6 @@ class Control(Scrollarea):
     def set_gauss_filter(self, val, param):
         if param == "state":
             self.gaussian_filter = bool(val)
-        elif param == "shape_x":
-            self.gaussian_filter_shape_x = val
-        elif param == "shape_y":
-            self.gaussian_filter_shape_y = val
         elif param == "sigma":
             self.gaussian_filter_sigma = val
         else:
@@ -1232,8 +1207,6 @@ class Control(Scrollarea):
         config["image_control"]["run_name"] = self.run_name_le.text()
         config["image_control"]["image_auto_save"] = str(self.img_save_chb.isChecked())
         config["image_control"]["gaussian_filter"] = str(self.gaussian_filter)
-        config["image_control"]["gaussian_filter_shape_x"] = str(self.gaussian_filter_shape_x)
-        config["image_control"]["gaussian_filter_shape_y"] = str(self.gaussian_filter_shape_y)
         config["image_control"]["gaussian_filter_sigma"] = str(self.gaussian_filter_sigma)
         for name in self.parent.image_win.imgs_name:
             config["image_control"][f"auto_scale_state_{name}"] = str(self.parent.image_win.auto_scale_state_dict[name])
@@ -1294,8 +1267,6 @@ class Control(Scrollarea):
         self.run_name_le.setText(config["image_control"].get("run_name"))
 
         self.gauss_filter_chb.setChecked(config["image_control"].getboolean("gaussian_filter"))
-        self.gauss_filter_shape_x_sb.setValue(config["image_control"].getint("gaussian_filter_shape_x"))
-        self.gauss_filter_shape_y_sb.setValue(config["image_control"].getint("gaussian_filter_shape_y"))
         self.gaussian_filter_sigma_dsb.setValue(config["image_control"].getfloat("gaussian_filter_sigma"))
 
         for name in self.parent.image_win.imgs_name:
