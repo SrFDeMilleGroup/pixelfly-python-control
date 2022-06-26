@@ -1,4 +1,4 @@
-from xml.etree.ElementInclude import include
+import logging, traceback
 import PyQt5
 import pyqtgraph as pg
 import PyQt5.QtGui as QtGui
@@ -44,8 +44,8 @@ class imageWidget:
 
         # add a pyqt widget to graphlayout
         # https://stackoverflow.com/questions/45184941/how-do-i-add-a-qpushbutton-to-pyqtgraph-using-additem
-        proxy = QtGui.QGraphicsProxyWidget()
-        self.chb = QtGui.QCheckBox("Auto scale color")
+        proxy = qt.QGraphicsProxyWidget()
+        self.chb = qt.QCheckBox("Auto scale color")
         proxy.setWidget(self.chb)
         self.graphlayout.addItem(hist, row=1, col=2)
         self.graphlayout.addItem(proxy, row=2, col=2)
