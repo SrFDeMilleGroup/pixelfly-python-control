@@ -12,7 +12,7 @@ class gaussian_filter_speed_test:
         shape_y = 45
         sigma = 7.5
 
-        repeat = 2
+        repeat = 20
 
         t1, arr_filtered_1 = self.method_1(arr, shape_x, shape_y, sigma, repeat)
         print("Method 1 takes time {:.2f} s.".format(t1))
