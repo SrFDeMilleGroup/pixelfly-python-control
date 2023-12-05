@@ -1,6 +1,6 @@
 # pixelfly-python-control
 
-*This is designed to work with SrF-lab-control-v2 python program and be called from there. This branch also includes updated features like gaussian filter, disabling auto image color scaling, etc.*
+*This is designed to work with SrF-lab-control-v2 python program and be called from there. This branch also includes the latest features like gaussian filter, manual image color scaling, etc.*
 
 This graphical user interface of [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific camera is designed for applications in atomic, molecular and optical (AMO) physics experiments.
 
