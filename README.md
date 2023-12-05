@@ -1,5 +1,7 @@
 # pixelfly-python-control
 
+*This is a standalone copy that was used in the Rb experiment.*
+
 This graphical user interface of [pco.pixelfly usb](https://www.pco.de/scientific-cameras/pcopixelfly-usb/) scientific camera is designed for applications in atomic, molecular and optical (AMO) physics experiments.
 
 Key features include:
