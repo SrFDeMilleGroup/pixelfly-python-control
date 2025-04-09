@@ -30,32 +30,38 @@ def gaussian(amp, x_mean, y_mean, x_width, y_width, offset):
 # return a 2D gaussian fit
 # generally a 2D gaussian fit can have 7 params, 6 of them are implemented here (the excluded one is an angle)
 # codes adapted from https://scipy-cookbook.readthedocs.io/items/FittingData.html
-def gaussianfit(data):
-    # calculate moments for initial guess
-    total = np.sum(data)
-    X, Y = np.indices(data.shape)
-    x_mean = np.sum(X*data)/total
+def gaussianfit(data, max_iter=1000, tol=1e-6):
+    data_no_offset = data.copy() - np.min(data) # to avoid total to be 0
+    total = np.sum(data_no_offset)
+    X, Y = np.indices(data.shape) # X = row indices, Y = column indices
+    x_mean = np.sum(X*data_no_offset) / total
     x_mean = np.clip(x_mean, 0, data.shape[0]-1) # coerce x_mean to data shape
-    y_mean = np.sum(Y*data)/total
+    y_mean = np.sum(Y*data_no_offset) / total
     y_mean = np.clip(y_mean, 0, data.shape[1]-1) # coerce y_mean to data shape
+
     col = data[:, int(y_mean)]
-    x_width = np.sqrt(np.abs((np.arange(col.size)-x_mean)**2*col).sum()/col.sum())
+    col_no_offset = col - np.min(col) # to avoid col.sum() to be 0
+    x_sigma = np.sqrt(np.abs((np.arange(col.size)-x_mean)**2*col_no_offset).sum() / col_no_offset.sum())
+
     row = data[int(x_mean), :]
-    y_width = np.sqrt(np.abs((np.arange(row.size)-y_mean)**2*row).sum()/row.sum())
-    offset = (data[0, :].sum()+data[-1, :].sum()+data[:, 0].sum()+data[:, -1].sum())/np.sum(data.shape)/2
+    row_no_offset = row - np.min(row) # to avoid row.sum() to be 0
+    y_sigma = np.sqrt(np.abs((np.arange(row.size)-y_mean)**2*row_no_offset).sum() / row_no_offset.sum())
+
+    offset = (data[0, :].sum() + data[-1, :].sum() + data[:, 0].sum() + data[:, -1].sum()) / np.sum(data.shape) / 2
     amp = data.max() - offset
 
-    # use optimize function to obtain 2D gaussian fit
-    errorfunction = lambda p: np.ravel(gaussian(*p)(*np.indices(data.shape))-data)
-    p, success = optimize.leastsq(errorfunction, (amp, x_mean, y_mean, x_width, y_width, offset))
+    init_param = np.array([amp, x_mean, y_mean, x_sigma, y_sigma, offset], dtype=np.float64)
+
+    errorfunction = lambda p: np.ravel(gaussian(*p)(X, Y) - data.astype(np.float64))
+    popt, pcov, infodict, msg, success = optimize.leastsq(errorfunction, init_param, maxfev=max_iter, ftol=tol, full_output=True)
 
     p_dict = {}
-    p_dict["x_mean"] = p[1]
-    p_dict["y_mean"] = p[2]
-    p_dict["x_width"] = p[3]
-    p_dict["y_width"] = p[4]
-    p_dict["amp"] = p[0]
-    p_dict["offset"] = p[5]
+    p_dict["x_mean"] = popt[1]
+    p_dict["y_mean"] = popt[2]
+    p_dict["x_width"] = popt[3]
+    p_dict["y_width"] = popt[4]
+    p_dict["amp"] = popt[0]
+    p_dict["offset"] = popt[5]
 
     return p_dict
 
@@ -203,7 +209,7 @@ class CamThread(PyQt5.QtCore.QThread):
                 time.sleep(0.001)
 
             if self.parent.control.active:
-                image, meta = self.parent.device.cam.image(image_number=0xFFFFFFFF) # readout the lastest image
+                image, meta = self.parent.device.cam.image(0xFFFFFFFF) # readout the lastest image
                 # image is in "unit16" data type, althought it only has 14 non-zero bits at most
                 # convert the image data type to float, to avoid overflow
                 image = np.flip(image.T, 1).astype("float")
@@ -950,7 +956,7 @@ class Control(Scrollarea):
 
                 if self.gaussian_fit:
                     # do 2D gaussian fit and update GUI displays
-                    param = gaussianfit(img_dict["image_post_roi"])
+                    param = gaussianfit(img_dict["image_post_roi"].copy())
                     self.amp.setText("{:.2f}".format(param["amp"]))
                     self.offset.setText("{:.2f}".format(param["offset"]))
                     self.x_mean.setText("{:.2f}".format(param["x_mean"]+self.roi["xmin"]))
